@@ -4,7 +4,7 @@
   "description": "Select main and branch breakers to estimate a panel board.",
   "start_url": "./index.html",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#EDEBE3",
   "theme_color": "#1B1F22",
   "orientation": "any",
