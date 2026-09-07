@@ -67,6 +67,42 @@ select:focus, input:focus, button:focus-visible {
 }
 .header svg { flex-shrink: 0; }
 
+/* Panel info bar */
+.panel-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: var(--white);
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+}
+.panel-info-select {
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+}
+.panel-info-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.panel-info-desc {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
 /* Sections */
 .section { margin-bottom: 28px; }
 .section-title-row {
@@ -274,10 +310,6 @@ table.breaker-table td.num { text-align: right; }
 }
 .nav-tab.active { color: #fff; border-bottom-color: var(--accent); }
 .nav-tab:hover { color: #fff; }
-
-@media (display-mode: fullscreen), (display-mode: standalone) {
-  .page-nav { display: none; }
-}
 
 /* Admin page */
 .global-toolbar {

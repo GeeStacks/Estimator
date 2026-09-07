@@ -12,6 +12,196 @@
     return Math.ceil(rawQty / 2);
   }
 
+  // ---- Mech lugs helpers ----
+  // Match a breaker's AT to a mech lugs bracket. Brackets are discrete
+  // ratings (16A, 20A, 25A...), so an AT that falls between brackets rounds
+  // UP to the next available one (e.g. a 10A breaker uses the 16A lugs).
+  function lookupMechLugs(at) {
+    const numAt = Number(at);
+    if (!Number.isFinite(numAt)) return null;
+    const candidates = MECH_LUGS.filter((r) => Number(r.ampere_trip) >= numAt);
+    if (!candidates.length) return null;
+    return candidates.reduce((best, r) =>
+      Number(r.ampere_trip) < Number(best.ampere_trip) ? r : best
+    );
+  }
+
+  // Mech lugs cost for the main breaker only. `multiplier` lets the main
+  // feed be sized up (2x/3x parallel lug sets) independent of branches.
+  function computeMainMechLugs(multiplier) {
+    const buckets = {};
+    let cost = 0;
+    let missing = 0;
+
+    if (!main.spare) {
+      const rowData = resolveRowData(main);
+      if (rowData) {
+        const lug = lookupMechLugs(rowData.at);
+        if (!lug) {
+          missing += main.qty;
+        } else {
+          const totalSets = main.qty * rowData.poles * lug.sets * multiplier;
+          const lineCost = totalSets * lug.price;
+          cost += lineCost;
+          const key = lug.ampere_trip + "|" + lug.mech_lugs_size;
+          buckets[key] = { ampereTrip: lug.ampere_trip, size: lug.mech_lugs_size, sets: totalSets, cost: lineCost };
+        }
+      }
+    }
+
+    const breakdown = Object.values(buckets).sort((a, b) => a.ampereTrip - b.ampereTrip);
+    return { cost, missing, breakdown, multiplier };
+  }
+
+  // Mech lugs cost across the branch breakers only (unchanged: one
+  // bracket's worth of lug sets per pole, per selected breaker).
+  function computeBranchMechLugs() {
+    const buckets = {};
+    let cost = 0;
+    let missing = 0;
+
+    branches.forEach((sel) => {
+      if (sel.spare) return;
+      const rowData = resolveRowData(sel);
+      if (!rowData) return;
+      const lug = lookupMechLugs(rowData.at);
+      if (!lug) {
+        missing += sel.qty;
+        return;
+      }
+      const totalSets = sel.qty * rowData.poles * lug.sets;
+      const lineCost = totalSets * lug.price;
+      cost += lineCost;
+      const key = lug.ampere_trip + "|" + lug.mech_lugs_size;
+      if (!buckets[key]) {
+        buckets[key] = { ampereTrip: lug.ampere_trip, size: lug.mech_lugs_size, sets: 0, cost: 0 };
+      }
+      buckets[key].sets += totalSets;
+      buckets[key].cost += lineCost;
+    });
+
+    const breakdown = Object.values(buckets).sort((a, b) => a.ampereTrip - b.ampereTrip);
+    return { cost, missing, breakdown };
+  }
+
+  // ---- Ground lugs / ground busbar helpers ----
+  // "One size down" from a bracket means the next-smaller row in that same
+  // table, ordered by rating. If the matched bracket is already the
+  // smallest one available, there's no smaller size to fall back to.
+  function sortedMechLugsAsc() {
+    return [...MECH_LUGS].sort((a, b) => Number(a.ampere_trip) - Number(b.ampere_trip));
+  }
+
+  function lookupGroundLug(at) {
+    const sorted = sortedMechLugsAsc();
+    const matchIdx = sorted.findIndex((r) => Number(r.ampere_trip) >= Number(at));
+    if (matchIdx === -1) return null; // AT exceeds the mech lugs table entirely
+    const groundIdx = matchIdx - 1;
+    if (groundIdx < 0) return null; // already the smallest bracket, nothing smaller
+    return sorted[groundIdx];
+  }
+
+  function sortedBusbarsForType(type) {
+    return BUSBARS.filter((b) => b.type === type).sort((a, b) => Number(a.min) - Number(b.min));
+  }
+
+  function lookupGroundBusbar(type, at) {
+    const list = sortedBusbarsForType(type);
+    const matchIdx = list.findIndex((b) => at >= b.min && at <= b.max);
+    if (matchIdx === -1) return null;
+    const groundIdx = matchIdx - 1;
+    if (groundIdx < 0) return null;
+    return list[groundIdx];
+  }
+
+  // 1 ground lug per breaker (not per pole), across main + branches.
+  function computeGroundLugs() {
+    const buckets = {};
+    let cost = 0;
+    let missing = 0;
+
+    function consider(sel) {
+      if (sel.spare) return;
+      const rowData = resolveRowData(sel);
+      if (!rowData) return;
+      const groundLug = lookupGroundLug(rowData.at);
+      if (!groundLug) {
+        missing += sel.qty;
+        return;
+      }
+      const qty = sel.qty; // 1 lug per breaker
+      const lineCost = qty * groundLug.price;
+      cost += lineCost;
+      const key = groundLug.ampere_trip + "|" + groundLug.mech_lugs_size;
+      if (!buckets[key]) {
+        buckets[key] = { ampereTrip: groundLug.ampere_trip, size: groundLug.mech_lugs_size, qty: 0, cost: 0 };
+      }
+      buckets[key].qty += qty;
+      buckets[key].cost += lineCost;
+    }
+
+    consider(main);
+    branches.forEach(consider);
+
+    const breakdown = Object.values(buckets).sort((a, b) => a.ampereTrip - b.ampereTrip);
+    return { cost, missing, breakdown };
+  }
+
+  // Ground busbar: one size down from the main breaker's own busbar
+  // bracket, priced at a flat standard length rather than measured cuts.
+  function computeGroundBusbar() {
+    const mainData = resolveRowData(main);
+    if (!mainData) return null;
+
+    const groundBusbar = lookupGroundBusbar(mainData.type, mainData.at);
+    const standardLength = CONSTANTS.ground_bus_length_mm || 0;
+    const BAR_LENGTH = 6000;
+    const pctOfBar = standardLength / BAR_LENGTH;
+    const busbarPrice = groundBusbar ? groundBusbar.price : null;
+    const cost = busbarPrice !== null ? pctOfBar * busbarPrice : null;
+
+    return {
+      standardLength, pctOfBar, busbarPrice,
+      busbarNeeded: groundBusbar ? groundBusbar.needed : null,
+      noSmallerBracket: !groundBusbar,
+      cost,
+    };
+  }
+
+  // Wiring description shown in the panel info bar. 400V always wins,
+  // regardless of pole count; otherwise it's driven by the main's poles.
+  function supplyDescription(voltage, poles) {
+    if (voltage === 400) return "3PH, 4W+G";
+    if (poles === 1 || poles === 2) return "1PH,2W+G";
+    if (poles === 3) return "3PH, 3W+G";
+    return "\u2014";
+  }
+
+  // Neutral busbar: same bracket as the main breaker's own busbar (full
+  // ampacity, unlike ground which steps down), priced the same
+  // standard-length way as the ground busbar. Disabled entirely by the
+  // "needs neutral bar" toggle for 3-phase-only panels.
+  function computeNeutralBusbar(enabled) {
+    const standardLength = CONSTANTS.neutral_bus_length_mm || 0;
+    if (!enabled) {
+      return { enabled: false, standardLength, busbarPrice: null, busbarNeeded: null, cost: 0 };
+    }
+    const mainData = resolveRowData(main);
+    if (!mainData) {
+      return { enabled: true, standardLength, busbarPrice: null, busbarNeeded: null, cost: null };
+    }
+    const neutralBusbar = lookupBusbar(mainData.type, mainData.at);
+    const BAR_LENGTH = 6000;
+    const pctOfBar = standardLength / BAR_LENGTH;
+    const busbarPrice = neutralBusbar ? neutralBusbar.price : null;
+    const cost = busbarPrice !== null ? pctOfBar * busbarPrice : null;
+    return {
+      enabled: true, standardLength, pctOfBar, busbarPrice,
+      busbarNeeded: neutralBusbar ? neutralBusbar.needed : null,
+      cost,
+    };
+  }
+
   // Busbar cuts needed for a group of N identical breakers, each with
   // `poles` phases. Pairing shares one cut per phase between 2 breakers;
   // an odd one out still needs its own cut per phase.
@@ -222,6 +412,10 @@
   let main = emptyRow();
   let branches = [emptyRow()];
   let useAssembly = false;
+  let mainLugMultiplier = 1;
+  let panelType = "MDP";
+  let supplyVoltage = 230;
+  let needsNeutralBar = true;
 
   function updateSelection(row, field, value) {
     const next = { ...row, [field]: value };
@@ -384,7 +578,7 @@
     }
     const rows = data.breakdown.map((b) =>
       el("div", { class: "busbar-line" }, [
-        el("span", {}, [b.width + "mm \u00d7 " + b.qty]),
+        el("span", {}, [b.width + "mm \u00d7 " + b.cuts]),
         el("span", { class: "mono" }, [b.totalLength + "mm"]),
       ])
     );
@@ -422,7 +616,7 @@
     }
     const rows = data.rows.map((r) =>
       el("div", { class: "busbar-line" }, [
-        el("span", {}, [r.type + " " + r.at + "A \u00d7 " + r.qty]),
+        el("span", {}, [r.type + " " + r.at + "A \u00d7 " + r.cuts]),
         el("span", { class: "mono" }, [
           r.finalPrice !== null ? formatMoney(r.finalPrice) : "no rate",
         ]),
@@ -468,6 +662,143 @@
     ]);
   }
 
+  function renderMechLugsBlock(data, title, extraControl) {
+    const rows = data.breakdown.map((b) =>
+      el("div", { class: "busbar-line" }, [
+        el("span", {}, [b.ampereTrip + "A \u00d7 " + b.sets + " (" + b.size + ")"]),
+        el("span", { class: "mono" }, [formatMoney(b.cost)]),
+      ])
+    );
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, [title]),
+        extraControl || null,
+        el(
+          "div",
+          { class: "busbar-lines" },
+          rows.length ? rows : [el("div", { class: "busbar-empty" }, ["No breakers selected."])]
+        ),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Total"]),
+          el("span", { class: "mono" }, ["\u20B1" + formatMoney(data.cost)]),
+        ]),
+      ]),
+    ]);
+  }
+
+  function mainLugMultiplierControl() {
+    return el("label", { class: "assembly-toggle-label", style: "margin-bottom:10px;" }, [
+      el("span", {}, ["Lug sets \u00d7"]),
+      el(
+        "select",
+        {
+          style: "width:auto;margin-left:8px;",
+          onchange: (e) => {
+            mainLugMultiplier = parseInt(e.target.value, 10);
+            render();
+          },
+        },
+        [1, 2, 3].map((n) =>
+          el(
+            "option",
+            { value: String(n), selected: n === mainLugMultiplier ? "selected" : undefined },
+            [n + "\u00d7"]
+          )
+        )
+      ),
+    ]);
+  }
+
+  function renderGroundLugsBlock(data) {
+    const rows = data.breakdown.map((b) =>
+      el("div", { class: "busbar-line" }, [
+        el("span", {}, [b.ampereTrip + "A \u00d7 " + b.qty + " (" + b.size + ")"]),
+        el("span", { class: "mono" }, [formatMoney(b.cost)]),
+      ])
+    );
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Ground lugs"]),
+        el(
+          "div",
+          { class: "busbar-lines" },
+          rows.length ? rows : [el("div", { class: "busbar-empty" }, ["No breakers selected."])]
+        ),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Total"]),
+          el("span", { class: "mono" }, ["\u20B1" + formatMoney(data.cost)]),
+        ]),
+      ]),
+    ]);
+  }
+
+  function renderGroundBusbarBlock(data) {
+    if (!data) {
+      return el("div", { class: "card" }, [
+        el("div", { class: "busbar-block" }, [
+          el("div", { class: "busbar-block-title" }, ["Ground busbar"]),
+          el("div", { class: "busbar-empty" }, ["Select a main breaker to calculate."]),
+        ]),
+      ]);
+    }
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Ground busbar"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Standard length"]),
+            el("span", { class: "mono" }, [data.standardLength + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Busbar used"]),
+            el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+          ]),
+        ]),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Ground busbar cost"]),
+          el("span", { class: "mono" }, [
+            data.noSmallerBracket
+              ? "no smaller bracket available"
+              : data.cost !== null
+              ? "\u20B1" + formatMoney(data.cost)
+              : "no rate for this AT",
+          ]),
+        ]),
+      ]),
+    ]);
+  }
+
+  function renderNeutralBusbarBlock(data) {
+    if (!data.enabled) {
+      return el("div", { class: "card" }, [
+        el("div", { class: "busbar-block" }, [
+          el("div", { class: "busbar-block-title" }, ["Neutral busbar"]),
+        ]),
+      ]);
+    }
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Neutral busbar"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Standard length"]),
+            el("span", { class: "mono" }, [data.standardLength + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Busbar used"]),
+            el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+          ]),
+        ]),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Neutral busbar cost"]),
+          el("span", { class: "mono" }, [
+            data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
+          ]),
+        ]),
+      ]),
+    ]);
+  }
+
   function trashIcon() {
     const span = el("span", { html: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path></svg>' }, []);
     return span;
@@ -507,9 +838,28 @@
     }
     cost += busbarTotal;
 
+    const mainMechLugs = computeMainMechLugs(mainLugMultiplier);
+    const branchMechLugs = computeBranchMechLugs();
+    const mechLugs = {
+      cost: mainMechLugs.cost + branchMechLugs.cost,
+      missing: mainMechLugs.missing + branchMechLugs.missing,
+      main: mainMechLugs,
+      branches: branchMechLugs,
+    };
+    cost += mechLugs.cost;
+
+    const groundLugs = computeGroundLugs();
+    cost += groundLugs.cost;
+
+    const groundBusbar = computeGroundBusbar();
+    if (groundBusbar && groundBusbar.cost !== null) cost += groundBusbar.cost;
+
+    const neutralBusbar = computeNeutralBusbar(needsNeutralBar);
+    if (neutralBusbar.cost !== null) cost += neutralBusbar.cost;
+
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal,
-      assemblyEligible: eligible, assembly,
+      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar,
     };
   }
 
@@ -526,6 +876,34 @@
       lineDiagramSvg(),
     ]);
     wrap.appendChild(header);
+
+    // Panel info bar: panel type, supply voltage, wiring description
+    const mainDataForDesc = resolveRowData(main);
+    const descText = supplyDescription(supplyVoltage, mainDataForDesc ? mainDataForDesc.poles : null);
+    const panelInfoBar = el("div", { class: "panel-info-bar" }, [
+      el("select", {
+        class: "panel-info-select",
+        onchange: (e) => {
+          panelType = e.target.value;
+          render();
+        },
+      }, ["MDP", "MCB", "MTS MDP"].map((opt) =>
+        el("option", { value: opt, selected: opt === panelType ? "selected" : undefined }, [opt])
+      )),
+      el("div", { class: "panel-info-right" }, [
+        el("select", {
+          class: "panel-info-select",
+          onchange: (e) => {
+            supplyVoltage = parseInt(e.target.value, 10);
+            render();
+          },
+        }, [230, 400].map((v) =>
+          el("option", { value: String(v), selected: v === supplyVoltage ? "selected" : undefined }, [v + "V"])
+        )),
+        el("span", { class: "panel-info-desc" }, [descText]),
+      ]),
+    ]);
+    wrap.appendChild(panelInfoBar);
 
     // Main breaker section
     const mainSection = el("div", { class: "section" }, [
@@ -663,6 +1041,74 @@
     ]);
     wrap.appendChild(busbarSection);
 
+    // Mech lugs
+    const mechLugsSection = el("div", { class: "section" }, [
+      el("h2", {}, ["Mech lugs"]),
+      el("p", { class: "sub" }, ["Solved separately for the main breaker and the branch breakers."]),
+      el("div", { class: "busbar-grid" }, [
+        el("div", {}, [
+          el("div", { class: "busbar-subtitle" }, ["Main breaker"]),
+          renderMechLugsBlock(totals.mechLugs.main, "Main mech lugs", mainLugMultiplierControl()),
+          totals.mechLugs.main.missing > 0
+            ? el("div", { class: "warn" }, ["No mech lugs bracket available for the main breaker's AT"])
+            : null,
+        ]),
+        el("div", {}, [
+          el("div", { class: "busbar-subtitle" }, ["Branch breakers"]),
+          renderMechLugsBlock(totals.mechLugs.branches, "Branch mech lugs"),
+          totals.mechLugs.branches.missing > 0
+            ? el("div", { class: "warn" }, [
+                totals.mechLugs.branches.missing +
+                  " circuit" +
+                  (totals.mechLugs.branches.missing !== 1 ? "s" : "") +
+                  " exceed" +
+                  (totals.mechLugs.branches.missing !== 1 ? "" : "s") +
+                  " the mech lugs table \u2014 no bracket available for that AT",
+              ])
+            : null,
+        ]),
+      ]),
+    ]);
+    wrap.appendChild(mechLugsSection);
+
+    // Ground lugs, ground busbar & neutral busbar
+    const groundSection = el("div", { class: "section" }, [
+      el("h2", {}, ["Grounding & neutral"]),
+      el("p", { class: "sub" }, ["1 ground lug per breaker, plus ground and neutral busbars."]),
+      el("div", { class: "assembly-toggle" }, [
+        el("label", { class: "assembly-toggle-label" }, [
+          el("input", {
+            type: "checkbox",
+            checked: needsNeutralBar ? "checked" : undefined,
+            onchange: (e) => {
+              needsNeutralBar = e.target.checked;
+              render();
+            },
+          }),
+          el("span", {}, ["This panel needs a neutral bar"]),
+        ]),
+        el("span", { class: "assembly-toggle-hint" }, [
+          "for 1P branches",
+        ]),
+      ]),
+      el("div", { class: "busbar-grid" }, [
+        el("div", {}, [
+          renderGroundLugsBlock(totals.groundLugs),
+          totals.groundLugs.missing > 0
+            ? el("div", { class: "warn" }, [
+                totals.groundLugs.missing +
+                  " circuit" +
+                  (totals.groundLugs.missing !== 1 ? "s" : "") +
+                  " have no smaller bracket available for ground lugs",
+              ])
+            : null,
+        ]),
+        el("div", {}, [renderGroundBusbarBlock(totals.groundBusbar)]),
+      ]),
+      el("div", { style: "margin-top:14px;" }, [renderNeutralBusbarBlock(totals.neutralBusbar)]),
+    ]);
+    wrap.appendChild(groundSection);
+
     // Summary
     const surchargeActive =
       (totals.mainBusbar && totals.mainBusbar.surcharge) ||
@@ -683,6 +1129,25 @@
         surchargeActive
           ? el("div", { class: "warn" }, ["\u2265315A branch present \u2014 main \u00d71.3, branch \u00d72 applied"])
           : null,
+      ]),
+      el("div", {}, [
+        el("div", { class: "label" }, ["Total mech lugs price"]),
+        el("div", { class: "big" }, ["\u20B1" + formatMoney(totals.mechLugs.cost)]),
+      ]),
+      el("div", {}, [
+        el("div", { class: "label" }, ["Total ground price"]),
+        el("div", { class: "big" }, [
+          "\u20B1" +
+            formatMoney(
+              totals.groundLugs.cost + (totals.groundBusbar && totals.groundBusbar.cost !== null ? totals.groundBusbar.cost : 0)
+            ),
+        ]),
+      ]),
+      el("div", {}, [
+        el("div", { class: "label" }, ["Total neutral bar price"]),
+        el("div", { class: "big" }, [
+          "\u20B1" + formatMoney(totals.neutralBusbar.cost !== null ? totals.neutralBusbar.cost : 0),
+        ]),
       ]),
       el("div", { class: "total" }, [
         el("div", { class: "label" }, ["Estimated total"]),
