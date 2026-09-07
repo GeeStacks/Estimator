@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Panel Board Builder</title>
+<meta name="description" content="Select main and branch breakers to estimate a panel board." />
+<meta name="theme-color" content="#1B1F22" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Panel Builder" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<nav id="page-nav" class="page-nav">
+  <button class="nav-tab active" data-page="builder">Builder</button>
+  <button class="nav-tab" data-page="admin">Database admin</button>
+</nav>
+<div id="builder-app" class="page-view"></div>
+<div id="admin-app" class="page-view" style="display:none"></div>
+
+<script src="data.js"></script>
+<script src="busbars.js"></script>
+<script src="assemblies.js"></script>
+<script src="seed_extra.js"></script>
+<script src="db.js"></script>
+<script src="app.js"></script>
+<script src="admin.js"></script>
+<script>
+  document.querySelectorAll(".nav-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".nav-tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const page = btn.dataset.page;
+      document.getElementById("builder-app").style.display = page === "builder" ? "" : "none";
+      document.getElementById("admin-app").style.display = page === "admin" ? "" : "none";
+      if (page === "builder" && window.renderBuilder) window.renderBuilder();
+      if (page === "admin" && window.renderAdmin) window.renderAdmin();
+    });
+  });
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js");
+    });
+  }
+</script>
+</body>
+</html>
