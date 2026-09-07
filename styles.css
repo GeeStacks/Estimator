@@ -275,6 +275,10 @@ table.breaker-table td.num { text-align: right; }
 .nav-tab.active { color: #fff; border-bottom-color: var(--accent); }
 .nav-tab:hover { color: #fff; }
 
+@media (display-mode: fullscreen), (display-mode: standalone) {
+  .page-nav { display: none; }
+}
+
 /* Admin page */
 .global-toolbar {
   display: flex;

@@ -12,10 +12,8 @@
         { key: "type", label: "Type", type: "text" },
         { key: "frame", label: "Frame", type: "number" },
         { key: "width", label: "Width", type: "number" },
-        { key: "height", label: "Height", type: "number" },
-        { key: "depth", label: "Depth", type: "number" },
       ],
-      blank: { brand: "", model: "", at: 0, poles: 1, price: "NO PRICE", kaic: 0, type: "MCB", frame: 0, width: 0, height: 0, depth: 0 },
+      blank: { brand: "", model: "", at: 0, poles: 1, price: "NO PRICE", kaic: 0, type: "MCB", frame: 0, width: 0 },
     },
     mech_lugs: {
       label: "Mech lugs",

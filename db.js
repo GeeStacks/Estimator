@@ -68,7 +68,6 @@
     replaceArrayContents(BUSBARS, DB.busbars.map(stripId));
     replaceArrayContents(ASSEMBLIES["2P"], DB.assemblies_2p.map(stripId));
     replaceArrayContents(ASSEMBLIES["3P"], DB.assemblies_3p.map(stripId));
-    replaceArrayContents(MECH_LUGS, DB.mech_lugs.map(stripId));
     Object.keys(CONSTANTS).forEach((k) => delete CONSTANTS[k]);
     DB.constants.forEach((c) => { CONSTANTS[c.name] = c.value; });
   }
