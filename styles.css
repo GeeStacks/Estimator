@@ -436,6 +436,185 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   table.admin-table { min-width: 720px; }
 }
 
+/* Receipt */
+.receipt {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px 22px;
+  font-family: var(--font-data);
+}
+.receipt-title {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--line);
+}
+.receipt-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 5px 0;
+  color: var(--ink);
+}
+.receipt-line.subtotal {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-weight: 600;
+}
+.receipt-line.grand-total {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--success);
+}
+.receipt-items {
+  padding: 4px 0 6px;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  margin: 4px 0;
+}
+.receipt-line.item {
+  font-size: 12px;
+  color: var(--muted);
+  gap: 10px;
+}
+.receipt-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.receipt-adjust-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+}
+.receipt-adjust-label {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1 1 auto;
+  min-width: 110px;
+}
+.receipt-adjust-select {
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 5px 6px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+.receipt-adjust-input {
+  width: 70px;
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 5px 6px;
+  font-size: 13px;
+  font-family: var(--font-data);
+  text-align: right;
+}
+.receipt-adjust-amount {
+  font-family: var(--font-data);
+  font-size: 13px;
+  min-width: 90px;
+  text-align: right;
+  color: var(--muted);
+}
+
+.po-save-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.po-save-name {
+  flex: 1 1 240px;
+  min-width: 200px;
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.po-save-message {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--success);
+}
+.po-name-input {
+  display: block;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 2px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-ui);
+  color: var(--ink);
+}
+.po-name-input:hover, .po-name-input:focus {
+  border-color: var(--border-input);
+  background: var(--white);
+}
+
+/* PO Creation Tool */
+.po-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+table.po-table { min-width: 900px; }
+table.po-table td, table.po-table th { vertical-align: top; }
+.po-item-no { width: 48px; text-align: center; font-family: var(--font-data); }
+.po-description { min-width: 320px; }
+.po-description pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-data);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.po-qty { width: 70px; }
+.po-qty input {
+  width: 100%;
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 6px;
+  font-size: 13px;
+  font-family: var(--font-data);
+  text-align: center;
+}
+.po-unit { width: 70px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.po-cost { white-space: nowrap; font-size: 13px; }
+.po-actions { white-space: nowrap; }
+.po-actions .toolbar-btn { margin-right: 6px; padding: 6px 10px; font-size: 12px; }
+.po-delete-btn { color: var(--danger); border-color: var(--danger); }
+.po-row-editing { background: #FBF1EA; }
+.po-grand-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  margin-top: 14px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--success);
+}
+
 /* Summary */
 .summary {
   display: flex;

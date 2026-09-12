@@ -68,9 +68,37 @@
       ],
       blank: { name: "", value: 0 },
     },
+    clearance: {
+      label: "Clearance",
+      fields: [
+        { key: "at", label: "AT", type: "number" },
+        { key: "wire_size", label: "Wire size", type: "text" },
+        { key: "lug_size_label", label: "Lug size", type: "text" },
+        { key: "bending_clearance_mm", label: "Bend clearance (mm)", type: "number" },
+        { key: "parallel_count", label: "Parallel count", type: "number" },
+        { key: "mgl_cat_no", label: "MGL cat. no.", type: "text" },
+      ],
+      blank: { at: 0, wire_size: "", lug_size_label: "", bending_clearance_mm: 0, parallel_count: 1, mgl_cat_no: "" },
+    },
+    lug_dimensions: {
+      label: "Lug dimensions",
+      fields: [
+        { key: "cat_no", label: "Cat. no.", type: "text" },
+        { key: "wire_range", label: "Wire range", type: "text" },
+        { key: "bolt_size_in", label: "Bolt size", type: "text" },
+        { key: "metric_bolt_mm", label: "Metric bolt (mm)", type: "number" },
+        { key: "L", label: "L (mm)", type: "number" },
+        { key: "W", label: "W (mm)", type: "number" },
+        { key: "G", label: "G (mm)", type: "number" },
+        { key: "H", label: "H (mm)", type: "number" },
+        { key: "F", label: "F (mm)", type: "number" },
+        { key: "std_pkg", label: "Std. pkg", type: "number" },
+      ],
+      blank: { cat_no: "", wire_range: "", bolt_size_in: "", metric_bolt_mm: 0, L: 0, W: 0, G: 0, H: 0, F: 0, std_pkg: 0 },
+    },
   };
 
-  const TABLE_ORDER = ["breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants"];
+  const TABLE_ORDER = ["breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants", "clearance", "lug_dimensions"];
 
   let activeTable = "breakers";
   let filterText = "";

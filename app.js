@@ -2,10 +2,40 @@
   const FIELD_ORDER = ["brand", "at", "poles", "model"];
 
   // ---- Busbar helpers ----
+  function sortedBusbarsForType(type) {
+    return BUSBARS.filter((b) => b.type === type).sort((a, b) => Number(a.min) - Number(b.min));
+  }
+
+  // Same bracket if it exists; otherwise round UP to the next higher one.
   function lookupBusbar(type, at) {
-    return BUSBARS.find(
-      (b) => b.type === type && at >= b.min && at <= b.max
-    ) || null;
+    const list = sortedBusbarsForType(type);
+    const idx = list.findIndex((b) => Number(at) <= Number(b.max));
+    return idx === -1 ? null : list[idx];
+  }
+
+  // Walks a sorted list backward from matchIdx looking for the first row
+  // whose `field` value differs from the matched row's. Several consecutive
+  // AT brackets often share the same physical conductor/lug size (priced
+  // differently for other reasons), so stepping down by table row alone can
+  // land on a row that's technically "lower" but physically the same size.
+  // This steps down to an actually smaller size. Falls back to the matched
+  // row itself if nothing smaller exists.
+  function stepDownByDistinctValue(list, matchIdx, field) {
+    const matchValue = list[matchIdx][field];
+    for (let i = matchIdx - 1; i >= 0; i--) {
+      if (list[i][field] !== matchValue) return list[i];
+    }
+    return list[matchIdx];
+  }
+
+  // Same-or-next-higher bracket (as above), then step DOWN to the next
+  // actually-smaller conductor size from that match. Used for ground and
+  // neutral busbars alike.
+  function lookupBusbarOneDown(type, at) {
+    const list = sortedBusbarsForType(type);
+    const idx = list.findIndex((b) => Number(at) <= Number(b.max));
+    if (idx === -1) return null; // AT exceeds every bracket for this type
+    return stepDownByDistinctValue(list, idx, "needed");
   }
 
   function pairedQty(rawQty) {
@@ -85,9 +115,11 @@
   }
 
   // ---- Ground lugs / ground busbar helpers ----
-  // "One size down" from a bracket means the next-smaller row in that same
-  // table, ordered by rating. If the matched bracket is already the
-  // smallest one available, there's no smaller size to fall back to.
+  // "One size down" means an actually smaller physical lug size, not just
+  // the next row down. Several consecutive AT brackets often share the same
+  // mech_lugs_size (priced differently at higher AT for other reasons), so
+  // this walks down until the size itself changes. If the matched bracket
+  // is already the smallest size available, there's nothing smaller.
   function sortedMechLugsAsc() {
     return [...MECH_LUGS].sort((a, b) => Number(a.ampere_trip) - Number(b.ampere_trip));
   }
@@ -96,22 +128,7 @@
     const sorted = sortedMechLugsAsc();
     const matchIdx = sorted.findIndex((r) => Number(r.ampere_trip) >= Number(at));
     if (matchIdx === -1) return null; // AT exceeds the mech lugs table entirely
-    const groundIdx = matchIdx - 1;
-    if (groundIdx < 0) return null; // already the smallest bracket, nothing smaller
-    return sorted[groundIdx];
-  }
-
-  function sortedBusbarsForType(type) {
-    return BUSBARS.filter((b) => b.type === type).sort((a, b) => Number(a.min) - Number(b.min));
-  }
-
-  function lookupGroundBusbar(type, at) {
-    const list = sortedBusbarsForType(type);
-    const matchIdx = list.findIndex((b) => at >= b.min && at <= b.max);
-    if (matchIdx === -1) return null;
-    const groundIdx = matchIdx - 1;
-    if (groundIdx < 0) return null;
-    return list[groundIdx];
+    return stepDownByDistinctValue(sorted, matchIdx, "mech_lugs_size");
   }
 
   // 1 ground lug per breaker (not per pole), across main + branches.
@@ -147,13 +164,14 @@
     return { cost, missing, breakdown };
   }
 
-  // Ground busbar: one size down from the main breaker's own busbar
-  // bracket, priced at a flat standard length rather than measured cuts.
+  // Ground busbar: same-or-next-higher bracket as the main breaker's own
+  // busbar, then one size down from that, priced at a flat standard length
+  // rather than measured cuts.
   function computeGroundBusbar() {
     const mainData = resolveRowData(main);
     if (!mainData) return null;
 
-    const groundBusbar = lookupGroundBusbar(mainData.type, mainData.at);
+    const groundBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
     const standardLength = CONSTANTS.ground_bus_length_mm || 0;
     const BAR_LENGTH = 6000;
     const pctOfBar = standardLength / BAR_LENGTH;
@@ -163,7 +181,7 @@
     return {
       standardLength, pctOfBar, busbarPrice,
       busbarNeeded: groundBusbar ? groundBusbar.needed : null,
-      noSmallerBracket: !groundBusbar,
+      exceedsTable: !groundBusbar,
       cost,
     };
   }
@@ -177,20 +195,19 @@
     return "\u2014";
   }
 
-  // Neutral busbar: same bracket as the main breaker's own busbar (full
-  // ampacity, unlike ground which steps down), priced the same
-  // standard-length way as the ground busbar. Disabled entirely by the
-  // "needs neutral bar" toggle for 3-phase-only panels.
+  // Neutral busbar: same-or-next-higher bracket as the main breaker's own
+  // busbar, then one size down from that (same rule as ground). Disabled
+  // entirely by the "needs neutral bar" toggle for 3-phase-only panels.
   function computeNeutralBusbar(enabled) {
     const standardLength = CONSTANTS.neutral_bus_length_mm || 0;
     if (!enabled) {
-      return { enabled: false, standardLength, busbarPrice: null, busbarNeeded: null, cost: 0 };
+      return { enabled: false, standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: 0 };
     }
     const mainData = resolveRowData(main);
     if (!mainData) {
-      return { enabled: true, standardLength, busbarPrice: null, busbarNeeded: null, cost: null };
+      return { enabled: true, standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: null };
     }
-    const neutralBusbar = lookupBusbar(mainData.type, mainData.at);
+    const neutralBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
     const BAR_LENGTH = 6000;
     const pctOfBar = standardLength / BAR_LENGTH;
     const busbarPrice = neutralBusbar ? neutralBusbar.price : null;
@@ -198,7 +215,106 @@
     return {
       enabled: true, standardLength, pctOfBar, busbarPrice,
       busbarNeeded: neutralBusbar ? neutralBusbar.needed : null,
+      exceedsTable: !neutralBusbar,
       cost,
+    };
+  }
+
+  // ---- Box dimensioning helpers ----
+  // Same-or-next-higher AT match against the clearance table (same
+  // round-up convention as busbars/mech lugs).
+  function lookupClearance(at) {
+    const sorted = [...CLEARANCE].sort((a, b) => Number(a.at) - Number(b.at));
+    const idx = sorted.findIndex((r) => Number(at) <= Number(r.at));
+    return idx === -1 ? null : sorted[idx];
+  }
+
+  function lookupLugDimensions(catNo) {
+    return LUG_DIMENSIONS.find((r) => r.cat_no === catNo) || null;
+  }
+
+  // Box Height = main clearance + main/branch gap + (branch breaker width
+  // stacked 2-per-row) + insulator/ground stand allowance + backplate
+  // clearance.
+  // Box Width = main width + side clearance (both sides) + branch height
+  // + lug factor (the matched lug's L dimension, doubled for parallel runs)
+  // + the same bending clearance used in Height.
+  function computeBoxDimensions() {
+    const mainData = resolveRowData(main);
+    if (!mainData) return null;
+
+    const clearanceRow = lookupClearance(mainData.at);
+    const mainClearance = clearanceRow ? clearanceRow.bending_clearance_mm : null;
+
+    const branchEntries = branches
+      .map((sel) => ({ sel, rowData: resolveRowData(sel) }))
+      .filter((x) => x.rowData);
+    const branchQty = branches.reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
+    const branchWidth = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.width || 0)) : 0;
+    const branchHeight = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.height || 0)) : 0;
+
+    const gap = CONSTANTS.box_main_branch_gap_mm || 0;
+    const groundStand = CONSTANTS.box_insulator_ground_stand_mm || 0;
+    const backplateClearance = CONSTANTS.box_backplate_clearance_mm || 0;
+
+    const branchRows = Math.ceil(branchQty / 2);
+    const branchBlockHeight = branchWidth * branchRows;
+
+    const height =
+      mainClearance !== null ? mainClearance + gap + branchBlockHeight + groundStand + backplateClearance : null;
+
+    // ---- First/Second branch: which branches set each side's lug
+    // factor + clearance. Sorted by AT descending; First = highest AT.
+    // Second = next-highest AT, UNLESS that one is a lone breaker (qty 1
+    // and no other branch selection shares its brand+model) — then skip
+    // down to the next branch with qty != 1. If nothing qualifies, reuse
+    // First branch's own values for the second side too.
+    const sortedByAt = [...branchEntries].sort((a, b) => Number(b.rowData.at) - Number(a.rowData.at));
+    const firstBranch = sortedByAt[0] || null;
+
+    function modelSharedElsewhere(entry) {
+      return branchEntries.some(
+        (x) => x !== entry && x.rowData.brand === entry.rowData.brand && x.rowData.model === entry.rowData.model
+      );
+    }
+
+    let secondBranch = sortedByAt[1] || null;
+    if (secondBranch) {
+      const isLoneUnit = secondBranch.sel.qty === 1 && !modelSharedElsewhere(secondBranch);
+      if (isLoneUnit) {
+        const replacement = sortedByAt.slice(2).find((x) => x.sel.qty !== 1);
+        secondBranch = replacement || firstBranch; // no qualifying branch: reuse First branch's values
+      }
+    } else {
+      secondBranch = firstBranch; // only one branch selected total
+    }
+
+    function sideFactorsFor(entry) {
+      if (!entry) return { at: null, lugFactor: null, sideClearance: null, exceeds: false };
+      const cRow = lookupClearance(entry.rowData.at);
+      if (!cRow) return { at: entry.rowData.at, lugFactor: null, sideClearance: null, exceeds: true };
+      const lRow = lookupLugDimensions(cRow.mgl_cat_no);
+      const lugFactor = lRow ? lRow.H * 0.6 * (cRow.parallel_count || 1) : null;
+      return { at: entry.rowData.at, lugFactor, sideClearance: cRow.bending_clearance_mm, exceeds: !lRow };
+    }
+
+    const side1 = sideFactorsFor(firstBranch);
+    const side2 = sideFactorsFor(secondBranch);
+    const sidesResolved = side1.lugFactor !== null && side2.lugFactor !== null;
+
+    const width =
+      mainClearance !== null && sidesResolved
+        ? mainData.width + branchHeight + mainClearance +
+          (side1.lugFactor + side1.sideClearance) +
+          (side2.lugFactor + side2.sideClearance)
+        : null;
+
+    return {
+      mainClearance, gap, branchBlockHeight, branchRows, branchQty, branchWidth, branchHeight,
+      groundStand, backplateClearance, clearanceRow,
+      mainWidth: mainData.width, height, width,
+      firstBranch, secondBranch, side1, side2,
+      exceedsTable: !clearanceRow || (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -316,7 +432,7 @@
     return {
       poles, sumLengths, mainBend, excessBend, totalLength, breakdown,
       pctOfBar, busbarPrice, busbarNeeded: busbar ? busbar.needed : null,
-      cost, surcharge,
+      cost, surcharge, exceedsTable: !busbar,
     };
   }
 
@@ -345,21 +461,24 @@
         totalLength,
         busbarPrice: busbar ? busbar.price : null,
         busbarNeeded: busbar ? busbar.needed : null,
+        exceedsTable: !busbar,
       };
     });
 
     const BAR_LENGTH = 6000;
     let cost = 0;
+    let exceedsCount = 0;
     rows.forEach((r) => {
       r.pctOfLength = r.totalLength / BAR_LENGTH;
       r.finalPrice = r.busbarPrice !== null ? r.pctOfLength * r.busbarPrice : null;
       if (r.finalPrice !== null) cost += r.finalPrice;
+      if (r.exceedsTable) exceedsCount += r.cuts;
     });
 
     const surcharge = anyBranchAtOrAbove(315);
     if (surcharge) cost *= 2;
 
-    return { poles, rows, cost, surcharge };
+    return { poles, rows, cost, surcharge, exceedsCount };
   }
 
   function parsePrice(raw) {
@@ -416,6 +535,15 @@
   let panelType = "MDP";
   let supplyVoltage = 230;
   let needsNeutralBar = true;
+  let profitMode = "percent"; // "percent" | "flat"
+  let profitValue = 0;
+  let discountMode = "percent"; // "percent" | "flat"
+  let discountValue = 0;
+  let mountingType = "SURFACE MOUNTED";
+  let nemaRating = "NEMA-1";
+  let giGauge = "16";
+  let poItemName = "PANEL BOARD";
+  let poSaveMessage = "";
 
   function updateSelection(row, field, value) {
     const next = { ...row, [field]: value };
@@ -604,6 +732,9 @@
           data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
         ]),
       ]),
+      data.exceedsTable
+        ? el("div", { class: "warn" }, ["Main breaker's AT exceeds the busbar table \u2014 needs a manual quote."])
+        : null,
     ]);
   }
 
@@ -633,6 +764,16 @@
         el("span", {}, ["Branch busbar cost"]),
         el("span", { class: "mono" }, ["\u20B1" + formatMoney(data.cost)]),
       ]),
+      data.exceedsCount > 0
+        ? el("div", { class: "warn" }, [
+            data.exceedsCount +
+              " branch cut" +
+              (data.exceedsCount !== 1 ? "s" : "") +
+              " exceed" +
+              (data.exceedsCount !== 1 ? "" : "s") +
+              " the busbar table \u2014 needs a manual quote.",
+          ])
+        : null,
     ]);
   }
 
@@ -757,13 +898,12 @@
         el("div", { class: "busbar-total" }, [
           el("span", {}, ["Ground busbar cost"]),
           el("span", { class: "mono" }, [
-            data.noSmallerBracket
-              ? "no smaller bracket available"
-              : data.cost !== null
-              ? "\u20B1" + formatMoney(data.cost)
-              : "no rate for this AT",
+            data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
           ]),
         ]),
+        data.exceedsTable
+          ? el("div", { class: "warn" }, ["Main breaker's AT exceeds the busbar table \u2014 needs a manual quote."])
+          : null,
       ]),
     ]);
   }
@@ -795,6 +935,74 @@
             data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
           ]),
         ]),
+        data.exceedsTable
+          ? el("div", { class: "warn" }, ["Main breaker's AT exceeds the busbar table \u2014 needs a manual quote."])
+          : null,
+      ]),
+    ]);
+  }
+
+  // Applies calibrated profit (markup on the subtotal), then applied
+  // discount (off the profit-inclusive price) — either can be a flat peso
+  // amount or a percent.
+  function computeReceipt(subtotal) {
+    const profitAmount = profitMode === "percent" ? subtotal * (profitValue / 100) : profitValue;
+    const afterProfit = subtotal + profitAmount;
+    const discountAmount = discountMode === "percent" ? afterProfit * (discountValue / 100) : discountValue;
+    const grandTotal = afterProfit - discountAmount;
+    return { subtotal, profitAmount, afterProfit, discountAmount, grandTotal };
+  }
+
+  function renderBoxDimensionsBlock(data) {
+    if (!data) {
+      return el("div", { class: "card" }, [
+        el("div", { class: "busbar-block" }, [
+          el("div", { class: "busbar-block-title" }, ["Box dimensions"]),
+          el("div", { class: "busbar-empty" }, ["Select a main breaker to calculate."]),
+        ]),
+      ]);
+    }
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Box dimensions"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main clearance (AT " + main.at + ")"]),
+            el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch rows (qty " + data.branchQty + ")"]),
+            el("span", { class: "mono" }, [String(data.branchRows)]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
+            ]),
+            el("span", { class: "mono" }, [
+              data.side1.lugFactor !== null
+                ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
+                : "\u2014",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
+            ]),
+            el("span", { class: "mono" }, [
+              data.side2.lugFactor !== null
+                ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
+                : "\u2014",
+            ]),
+          ]),
+        ]),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Height \u00d7 Width"]),
+          el("span", { class: "mono" }, [
+            data.height !== null && data.width !== null
+              ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm"
+              : "no clearance data for this AT",
+          ]),
+        ]),
       ]),
     ]);
   }
@@ -808,19 +1016,37 @@
     let cost = 0;
     let circuitCount = 0;
     let missing = 0;
+    const breakerLines = [];
 
-    function consider(sel) {
+    function consider(sel, label) {
       const rowData = resolveRowData(sel);
       if (!rowData) return;
       circuitCount += sel.qty;
-      if (sel.spare) return; // spares occupy busbar space but carry no breaker cost
+      if (sel.spare) {
+        breakerLines.push({
+          label, brand: rowData.brand, model: rowData.model, at: rowData.at, poles: rowData.poles,
+          qty: sel.qty, unitPrice: null, lineCost: 0, spare: true,
+        });
+        return; // spares occupy busbar space but carry no breaker cost
+      }
       const price = parsePrice(rowData.price);
-      if (price === null) missing += 1;
-      else cost += price * sel.qty;
+      if (price === null) {
+        missing += 1;
+        breakerLines.push({
+          label, brand: rowData.brand, model: rowData.model, at: rowData.at, poles: rowData.poles,
+          qty: sel.qty, unitPrice: null, lineCost: null, spare: false,
+        });
+      } else {
+        cost += price * sel.qty;
+        breakerLines.push({
+          label, brand: rowData.brand, model: rowData.model, at: rowData.at, poles: rowData.poles,
+          qty: sel.qty, unitPrice: price, lineCost: price * sel.qty, spare: false,
+        });
+      }
     }
 
-    consider(main);
-    branches.forEach(consider);
+    consider(main, "Main");
+    branches.forEach((sel, i) => consider(sel, "Branch " + (i + 1)));
 
     const eligible = assemblyEligible();
     const assembly = eligible && useAssembly ? computeAssembly() : null;
@@ -857,9 +1083,11 @@
     const neutralBusbar = computeNeutralBusbar(needsNeutralBar);
     if (neutralBusbar.cost !== null) cost += neutralBusbar.cost;
 
+    const boxDimensions = computeBoxDimensions();
+
     return {
-      cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal,
-      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar,
+      cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
+      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions,
     };
   }
 
@@ -887,7 +1115,7 @@
           panelType = e.target.value;
           render();
         },
-      }, ["MDP", "MCB", "MTS MDP"].map((opt) =>
+      }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP"].map((opt) =>
         el("option", { value: opt, selected: opt === panelType ? "selected" : undefined }, [opt])
       )),
       el("div", { class: "panel-info-right" }, [
@@ -904,6 +1132,31 @@
       ]),
     ]);
     wrap.appendChild(panelInfoBar);
+
+    // Enclosure info bar: mounting + NEMA rating + GI gauge (feeds the PO description)
+    const enclosureBar = el("div", { class: "panel-info-bar" }, [
+      el("select", {
+        class: "panel-info-select",
+        onchange: (e) => { mountingType = e.target.value; render(); },
+      }, ["SURFACE MOUNTED", "FLUSH MOUNTED"].map((opt) =>
+        el("option", { value: opt, selected: opt === mountingType ? "selected" : undefined }, [opt])
+      )),
+      el("div", { class: "panel-info-right" }, [
+        el("select", {
+          class: "panel-info-select",
+          onchange: (e) => { nemaRating = e.target.value; render(); },
+        }, ["NEMA-1", "NEMA-3R", "NEMA-4", "NEMA-4X", "NEMA-12"].map((opt) =>
+          el("option", { value: opt, selected: opt === nemaRating ? "selected" : undefined }, [opt])
+        )),
+        el("select", {
+          class: "panel-info-select",
+          onchange: (e) => { giGauge = e.target.value; render(); },
+        }, ["12", "14", "16"].map((opt) =>
+          el("option", { value: opt, selected: opt === giGauge ? "selected" : undefined }, ["GI#" + opt])
+        )),
+      ]),
+    ]);
+    wrap.appendChild(enclosureBar);
 
     // Main breaker section
     const mainSection = el("div", { class: "section" }, [
@@ -1099,7 +1352,9 @@
                 totals.groundLugs.missing +
                   " circuit" +
                   (totals.groundLugs.missing !== 1 ? "s" : "") +
-                  " have no smaller bracket available for ground lugs",
+                  " exceed" +
+                  (totals.groundLugs.missing !== 1 ? "" : "s") +
+                  " the mech lugs table \u2014 needs a manual quote",
               ])
             : null,
         ]),
@@ -1109,52 +1364,180 @@
     ]);
     wrap.appendChild(groundSection);
 
-    // Summary
+    // Box dimensions
+    const boxSection = el("div", { class: "section" }, [
+      el("h2", {}, ["Box dimensions"]),
+      el("p", { class: "sub" }, ["Estimated enclosure height and width from the main breaker, branches, and clearance table."]),
+      renderBoxDimensionsBlock(totals.boxDimensions),
+      totals.boxDimensions && totals.boxDimensions.exceedsTable
+        ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
+        : null,
+    ]);
+    wrap.appendChild(boxSection);
+
+    // Receipt
     const surchargeActive =
       (totals.mainBusbar && totals.mainBusbar.surcharge) ||
       (totals.branchBusbar && totals.branchBusbar.surcharge);
-    const summary = el("div", { class: "summary" }, [
-      el("div", {}, [
-        el("div", { class: "label" }, ["Breakers selected"]),
-        el("div", { class: "big" }, [String(totals.circuitCount)]),
-        totals.missing > 0
-          ? el("div", { class: "warn" }, [
-              totals.missing + " model" + (totals.missing !== 1 ? "s" : "") + " need a price quote",
-            ])
-          : null,
+    const groundCost =
+      totals.groundLugs.cost + (totals.groundBusbar && totals.groundBusbar.cost !== null ? totals.groundBusbar.cost : 0);
+    const neutralCost = totals.neutralBusbar.cost !== null ? totals.neutralBusbar.cost : 0;
+    const receipt = computeReceipt(totals.cost);
+
+    function adjustRow(label, mode, value, onModeChange, onValueChange, amountLabel) {
+      return el("div", { class: "receipt-adjust-row" }, [
+        el("span", { class: "receipt-adjust-label" }, [label]),
+        el(
+          "select",
+          { class: "receipt-adjust-select", onchange: (e) => onModeChange(e.target.value) },
+          [
+            el("option", { value: "percent", selected: mode === "percent" ? "selected" : undefined }, ["%"]),
+            el("option", { value: "flat", selected: mode === "flat" ? "selected" : undefined }, ["\u20B1"]),
+          ]
+        ),
+        el("input", {
+          type: "number",
+          class: "receipt-adjust-input",
+          value: String(value),
+          oninput: (e) => onValueChange(parseFloat(e.target.value) || 0),
+        }),
+        el("span", { class: "receipt-adjust-amount" }, [amountLabel]),
+      ]);
+    }
+
+    const receiptCard = el("div", { class: "card receipt" }, [
+      el("div", { class: "receipt-title" }, ["Estimate"]),
+
+      el("div", { class: "receipt-line" }, [
+        el("span", {}, ["Breakers selected"]),
+        el("span", { class: "mono" }, [String(totals.circuitCount)]),
       ]),
-      el("div", {}, [
-        el("div", { class: "label" }, ["Total busbar price"]),
-        el("div", { class: "big" }, ["\u20B1" + formatMoney(totals.busbarTotal)]),
-        surchargeActive
-          ? el("div", { class: "warn" }, ["\u2265315A branch present \u2014 main \u00d71.3, branch \u00d72 applied"])
-          : null,
+      totals.missing > 0
+        ? el("div", { class: "warn" }, [
+            totals.missing + " model" + (totals.missing !== 1 ? "s" : "") + " need a price quote",
+          ])
+        : null,
+
+      el(
+        "div",
+        { class: "receipt-items" },
+        totals.breakerLines.map((line) =>
+          el("div", { class: "receipt-line item" }, [
+            el("span", { class: "receipt-item-label" }, [
+              line.label +
+                ": " +
+                line.brand +
+                " " +
+                line.model +
+                " (" +
+                line.at +
+                "A, " +
+                line.poles +
+                "P)" +
+                (line.qty > 1 ? " \u00d7" + line.qty : ""),
+            ]),
+            el("span", { class: "mono" }, [
+              line.spare ? "SPARE" : line.unitPrice === null ? "NO PRICE" : formatMoney(line.lineCost),
+            ]),
+          ])
+        )
+      ),
+
+      el("div", { class: "receipt-line" }, [
+        el("span", {}, ["Busbar"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.busbarTotal)]),
       ]),
-      el("div", {}, [
-        el("div", { class: "label" }, ["Total mech lugs price"]),
-        el("div", { class: "big" }, ["\u20B1" + formatMoney(totals.mechLugs.cost)]),
+      surchargeActive
+        ? el("div", { class: "warn" }, ["\u2265315A branch present \u2014 main \u00d71.3, branch \u00d72 applied"])
+        : null,
+
+      el("div", { class: "receipt-line" }, [
+        el("span", {}, ["Mech lugs"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.mechLugs.cost)]),
       ]),
-      el("div", {}, [
-        el("div", { class: "label" }, ["Total ground price"]),
-        el("div", { class: "big" }, [
-          "\u20B1" +
-            formatMoney(
-              totals.groundLugs.cost + (totals.groundBusbar && totals.groundBusbar.cost !== null ? totals.groundBusbar.cost : 0)
-            ),
-        ]),
+      el("div", { class: "receipt-line" }, [
+        el("span", {}, ["Ground (lugs + busbar)"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(groundCost)]),
       ]),
-      el("div", {}, [
-        el("div", { class: "label" }, ["Total neutral bar price"]),
-        el("div", { class: "big" }, [
-          "\u20B1" + formatMoney(totals.neutralBusbar.cost !== null ? totals.neutralBusbar.cost : 0),
-        ]),
+      el("div", { class: "receipt-line" }, [
+        el("span", {}, ["Neutral busbar"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(neutralCost)]),
       ]),
-      el("div", { class: "total" }, [
-        el("div", { class: "label" }, ["Estimated total"]),
-        el("div", { class: "big" }, ["\u20B1" + formatMoney(totals.cost)]),
+
+      el("div", { class: "receipt-line subtotal" }, [
+        el("span", {}, ["Subtotal"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(receipt.subtotal)]),
+      ]),
+
+      adjustRow(
+        "Calibrated profit",
+        profitMode,
+        profitValue,
+        (v) => { profitMode = v; render(); },
+        (v) => { profitValue = v; render(); },
+        "+\u20B1" + formatMoney(receipt.profitAmount)
+      ),
+      adjustRow(
+        "Applied discount",
+        discountMode,
+        discountValue,
+        (v) => { discountMode = v; render(); },
+        (v) => { discountValue = v; render(); },
+        "\u2212\u20B1" + formatMoney(receipt.discountAmount)
+      ),
+
+      el("div", { class: "receipt-line grand-total" }, [
+        el("span", {}, ["Grand total"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(receipt.grandTotal)]),
       ]),
     ]);
-    wrap.appendChild(summary);
+    wrap.appendChild(receiptCard);
+
+    // Save to PO
+    const editingId = window.getPOEditingId ? window.getPOEditingId() : null;
+    const poSection = el("div", { class: "section" }, [
+      el("h2", {}, ["Save to PO"]),
+      editingId !== null
+        ? el("p", { class: "sub" }, ["Editing PO line item #" + editingId + ". Saving will update it in place."])
+        : el("p", { class: "sub" }, ["Save this configuration as a line item in the PO Creation Tool."]),
+      el("div", { class: "po-save-row" }, [
+        el("input", {
+          type: "text",
+          class: "po-save-name",
+          placeholder: "Item name (e.g. PANEL BOARD 1)",
+          value: poItemName,
+          oninput: (e) => { poItemName = e.target.value; },
+        }),
+        el(
+          "button",
+          {
+            class: "add-btn",
+            onclick: async () => {
+              if (window.savePOItem) await window.savePOItem(poItemName);
+              poSaveMessage = editingId !== null ? "Updated PO line item." : "Saved to PO Creation Tool.";
+              render();
+            },
+          },
+          [editingId !== null ? "Update PO line item" : "+ Save to PO"]
+        ),
+        editingId !== null
+          ? el(
+              "button",
+              {
+                class: "toolbar-btn",
+                onclick: () => {
+                  if (window.cancelPOEdit) window.cancelPOEdit();
+                  poSaveMessage = "";
+                  render();
+                },
+              },
+              ["Cancel edit"]
+            )
+          : null,
+      ]),
+      poSaveMessage ? el("div", { class: "po-save-message" }, [poSaveMessage]) : null,
+    ]);
+    wrap.appendChild(poSection);
 
     app.appendChild(wrap);
   }
@@ -1192,4 +1575,49 @@
 
   window.DBReady.then(render);
   window.renderBuilder = render;
+
+  // ---- PO tool bridge ----
+  // Snapshot everything the PO page needs to build a description + price,
+  // without duplicating the breaker-matching logic here.
+  window.getBuilderConfig = function () {
+    const mainResolved = resolveRowData(main);
+    const branchesResolved = branches.map((sel) => ({ sel: { ...sel }, rowData: resolveRowData(sel) }));
+    const totals = computeTotals();
+    const receipt = computeReceipt(totals.cost);
+    return {
+      main: { ...main },
+      branches: branches.map((b) => ({ ...b })),
+      useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar,
+      profitMode, profitValue, discountMode, discountValue,
+      mountingType, nemaRating, giGauge,
+      mainResolved, branchesResolved,
+      supplyDescriptionText: supplyDescription(supplyVoltage, mainResolved ? mainResolved.poles : null),
+      grandTotal: receipt.grandTotal,
+    };
+  };
+
+  window.loadBuilderConfig = function (config) {
+    if (!config) return;
+    main = { ...config.main };
+    branches = config.branches.map((b) => ({ ...b }));
+    useAssembly = !!config.useAssembly;
+    mainLugMultiplier = config.mainLugMultiplier || 1;
+    panelType = config.panelType || "MDP";
+    supplyVoltage = config.supplyVoltage || 230;
+    needsNeutralBar = config.needsNeutralBar !== undefined ? config.needsNeutralBar : true;
+    profitMode = config.profitMode || "percent";
+    profitValue = config.profitValue || 0;
+    discountMode = config.discountMode || "percent";
+    discountValue = config.discountValue || 0;
+    mountingType = config.mountingType || "SURFACE MOUNTED";
+    nemaRating = config.nemaRating || "NEMA-1";
+    giGauge = config.giGauge || "16";
+    poSaveMessage = "";
+    render();
+  };
+
+  window.setPOItemName = function (name) {
+    poItemName = name || "PANEL BOARD";
+    render();
+  };
 })();

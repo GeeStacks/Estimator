@@ -1,15 +1,17 @@
-const CACHE_NAME = "panel-board-builder-v2";
+const CACHE_NAME = "panel-board-builder-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./po.js",
   "./admin.js",
   "./db.js",
   "./data.js",
   "./busbars.js",
   "./assemblies.js",
   "./seed_extra.js",
+  "./box_seed.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
