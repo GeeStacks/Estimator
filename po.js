@@ -2,6 +2,8 @@
   const root = document.getElementById("po-app");
   let quotations = [];
   let editingId = null;
+  let printHeader = localStorage.getItem("po_print_header") || "";
+  let printFooter = localStorage.getItem("po_print_footer") || "";
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -130,9 +132,45 @@
     ]);
   }
 
+  // Static, print-only rendering of the same data — plain text instead of
+  // inputs/buttons, plus the header/footer. Kept in sync on every render()
+  // and shown only by the @media print rules in styles.css.
+  function renderPrintSheet(grandTotal) {
+    const rows = quotations.map((q, i) =>
+      el("tr", {}, [
+        el("td", { class: "po-item-no" }, [String(i + 1)]),
+        el("td", { class: "po-description" }, [el("pre", {}, [q.description])]),
+        el("td", { class: "po-qty" }, [String(q.qty)]),
+        el("td", { class: "po-unit" }, [q.unit]),
+        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.unitCost)]),
+        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.qty * q.unitCost)]),
+      ])
+    );
+
+    return el("div", { class: "print-only po-print-sheet" }, [
+      printHeader ? el("div", { class: "po-print-header" }, [printHeader]) : null,
+      el("h1", { class: "po-print-title" }, ["Purchase Order"]),
+      el("table", { class: "po-print-table" }, [
+        el("thead", {}, [
+          el("tr", {}, [
+            el("th", {}, ["ITEM #"]),
+            el("th", {}, ["DESCRIPTION"]),
+            el("th", {}, ["QTY"]),
+            el("th", {}, ["UNIT"]),
+            el("th", {}, ["UNIT COST"]),
+            el("th", {}, ["TOTAL COST"]),
+          ]),
+        ]),
+        el("tbody", {}, rows.length ? rows : [el("tr", {}, [el("td", { colspan: "6" }, ["No line items."])])]),
+      ]),
+      el("div", { class: "po-print-total" }, ["PO GRAND TOTAL: \u20B1" + formatMoney(grandTotal)]),
+      printFooter ? el("div", { class: "po-print-footer" }, [printFooter]) : null,
+    ]);
+  }
+
   function render() {
     root.innerHTML = "";
-    const wrap = el("div", { class: "wrap" }, []);
+    const wrap = el("div", { class: "wrap no-print" }, []);
 
     wrap.appendChild(
       el("div", { class: "header" }, [
@@ -192,7 +230,48 @@
       );
     }
 
+    // Header/footer editors + print action
+    const printSection = el("div", { class: "section" }, [
+      el("h2", {}, ["Print / Export as PDF"]),
+      el("p", { class: "sub" }, [
+        "Shown at the top and bottom of the printed sheet. Use your browser's print dialog and choose \u201cSave as PDF.\u201d",
+      ]),
+      el("div", { class: "po-print-fields" }, [
+        el("label", { class: "po-print-field-label" }, [
+          "Header",
+          el("textarea", {
+            class: "po-print-textarea",
+            rows: "3",
+            placeholder: "Company name, address, contact info\u2026",
+            oninput: (e) => {
+              printHeader = e.target.value;
+              localStorage.setItem("po_print_header", printHeader);
+            },
+          }, [printHeader]),
+        ]),
+        el("label", { class: "po-print-field-label" }, [
+          "Footer",
+          el("textarea", {
+            class: "po-print-textarea",
+            rows: "3",
+            placeholder: "Terms, prepared by, signature block\u2026",
+            oninput: (e) => {
+              printFooter = e.target.value;
+              localStorage.setItem("po_print_footer", printFooter);
+            },
+          }, [printFooter]),
+        ]),
+      ]),
+      el(
+        "button",
+        { class: "add-btn", onclick: () => window.print() },
+        ["Print / Save as PDF"]
+      ),
+    ]);
+    wrap.appendChild(printSection);
+
     root.appendChild(wrap);
+    root.appendChild(renderPrintSheet(grandTotal));
   }
 
   // ---- Bridge for the Builder tab's "Save to PO" control ----

@@ -7,7 +7,7 @@
 
   const TABLE_NAMES = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions",
+    "clearance", "lug_dimensions", "ats_mts",
   ];
 
   function hardcodedSeedFor(name) {
@@ -28,6 +28,8 @@
         return SEED_CLEARANCE.map((r, i) => ({ id: i + 1, ...r }));
       case "lug_dimensions":
         return SEED_LUG_DIMENSIONS.map((r, i) => ({ id: i + 1, ...r }));
+      case "ats_mts":
+        return SEED_ATS_MTS.map((r, i) => ({ id: i + 1, ...r }));
       default:
         return [];
     }
@@ -118,6 +120,7 @@
     replaceArrayContents(MECH_LUGS, DB.mech_lugs.map(stripId));
     replaceArrayContents(CLEARANCE, DB.clearance.map(stripId));
     replaceArrayContents(LUG_DIMENSIONS, DB.lug_dimensions.map(stripId));
+    replaceArrayContents(ATS_MTS, DB.ats_mts.map(stripId));
     Object.keys(CONSTANTS).forEach((k) => delete CONSTANTS[k]);
     DB.constants.forEach((c) => { CONSTANTS[c.name] = c.value; });
   }

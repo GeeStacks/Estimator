@@ -96,9 +96,33 @@
       ],
       blank: { cat_no: "", wire_range: "", bolt_size_in: "", metric_bolt_mm: 0, L: 0, W: 0, G: 0, H: 0, F: 0, std_pkg: 0 },
     },
+    ats_mts: {
+      label: "ATS/MTS",
+      fields: [
+        { key: "min", label: "AT min", type: "number" },
+        { key: "max", label: "AT max", type: "number" },
+        { key: "pole", label: "Pole", type: "number" },
+        { key: "bend_1st", label: "1st Bend", type: "number" },
+        { key: "bend_2nd", label: "2nd Bend", type: "number" },
+        { key: "bend_hor", label: "Hor. Bend", type: "number" },
+        { key: "bend_3rd", label: "3rd Bend", type: "number" },
+        { key: "bend_4th", label: "4th Bend", type: "number" },
+        { key: "total_length_mm", label: "Total Length (mm)", type: "number" },
+        { key: "motor", label: "Motor", type: "number" },
+        { key: "controller", label: "Controller", type: "number" },
+        { key: "accessories", label: "Accessories", type: "number" },
+      ],
+      blank: {
+        min: 0, max: 0, pole: 3, bend_1st: 0, bend_2nd: 0, bend_hor: 0, bend_3rd: 0, bend_4th: 0,
+        total_length_mm: 0, motor: 0, controller: 0, accessories: 0,
+      },
+    },
   };
 
-  const TABLE_ORDER = ["breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants", "clearance", "lug_dimensions"];
+  const TABLE_ORDER = [
+    "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
+    "clearance", "lug_dimensions", "ats_mts",
+  ];
 
   let activeTable = "breakers";
   let filterText = "";

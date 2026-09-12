@@ -233,6 +233,54 @@
     return LUG_DIMENSIONS.find((r) => r.cat_no === catNo) || null;
   }
 
+  // Same-or-next-higher AT match against the ATS/MTS table, scoped to the
+  // matching pole count (2P and 3P have separate bracket ladders).
+  function lookupAtsMts(at, poles) {
+    const candidates = ATS_MTS.filter((r) => Number(r.pole) === Number(poles));
+    const sorted = candidates.sort((a, b) => Number(a.max) - Number(b.max));
+    const idx = sorted.findIndex((r) => Number(at) <= Number(r.max));
+    return idx === -1 ? null : sorted[idx];
+  }
+
+  // Only applies when the panel type is MTS/MTS MDP or ATS/ATS MDP.
+  // MTS: bending cost = (ATS/MTS table's Total Length / 6000) * the main
+  // breaker's own busbar bracket price.
+  // ATS: adds the table's Controller + Accessories costs (flat, not
+  // length-based). Neither applies to the other panel type per spec.
+  // Bending cost applies to BOTH MTS and ATS (same length/busbar-price
+  // formula). ATS additionally adds Controller + Accessories on top.
+  function computeAtsMtsCost() {
+    if (panelType !== "MTS/ MTS MDP" && panelType !== "ATS/ATS MDP") return null;
+    const mainData = resolveRowData(main);
+    if (!mainData) return null;
+
+    const atsRow = lookupAtsMts(mainData.at, mainData.poles);
+    if (!atsRow) return { cost: 0, breakdown: [], atsRow: null, exceedsTable: true };
+
+    const breakdown = [];
+    let cost = 0;
+
+    const busbar = lookupBusbar(mainData.type, mainData.at);
+    const busbarPrice = busbar ? busbar.price : null;
+    if (busbarPrice !== null) {
+      const pctOfBar = atsRow.total_length_mm / 6000;
+      const bendCost = pctOfBar * busbarPrice;
+      cost += bendCost;
+      breakdown.push({ label: "Bending (" + atsRow.total_length_mm + "mm total length)", cost: bendCost });
+    } else {
+      return { cost: 0, breakdown: [], atsRow, exceedsTable: true };
+    }
+
+    if (panelType === "ATS/ATS MDP") {
+      cost += atsRow.controller;
+      breakdown.push({ label: "Controller", cost: atsRow.controller });
+      cost += atsRow.accessories;
+      breakdown.push({ label: "Accessories", cost: atsRow.accessories });
+    }
+
+    return { cost, breakdown, atsRow, exceedsTable: false };
+  }
+
   // Box Height = main clearance + main/branch gap + (branch breaker width
   // stacked 2-per-row) + insulator/ground stand allowance + backplate
   // clearance.
@@ -245,6 +293,8 @@
 
     const clearanceRow = lookupClearance(mainData.at);
     const mainClearance = clearanceRow ? clearanceRow.bending_clearance_mm : null;
+    const mainLugRow = clearanceRow ? lookupLugDimensions(clearanceRow.mgl_cat_no) : null;
+    const mainLugFactor = mainLugRow ? mainLugRow.H * 0.6 * (clearanceRow.parallel_count || 1) : null;
 
     const branchEntries = branches
       .map((sel) => ({ sel, rowData: resolveRowData(sel) }))
@@ -261,7 +311,9 @@
     const branchBlockHeight = branchWidth * branchRows;
 
     const height =
-      mainClearance !== null ? mainClearance + gap + branchBlockHeight + groundStand + backplateClearance : null;
+      mainClearance !== null && mainLugFactor !== null
+        ? mainClearance + mainLugFactor + gap + branchBlockHeight + groundStand + backplateClearance
+        : null;
 
     // ---- First/Second branch: which branches set each side's lug
     // factor + clearance. Sorted by AT descending; First = highest AT.
@@ -310,11 +362,11 @@
         : null;
 
     return {
-      mainClearance, gap, branchBlockHeight, branchRows, branchQty, branchWidth, branchHeight,
+      mainClearance, mainLugFactor, gap, branchBlockHeight, branchRows, branchQty, branchWidth, branchHeight,
       groundStand, backplateClearance, clearanceRow,
       mainWidth: mainData.width, height, width,
       firstBranch, secondBranch, side1, side2,
-      exceedsTable: !clearanceRow || (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+      exceedsTable: !clearanceRow || !mainLugRow || (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -953,6 +1005,29 @@
     return { subtotal, profitAmount, afterProfit, discountAmount, grandTotal };
   }
 
+  function renderAtsMtsBlock(data) {
+    const rows = data.breakdown.map((b) =>
+      el("div", { class: "busbar-line" }, [
+        el("span", {}, [b.label]),
+        el("span", { class: "mono" }, [formatMoney(b.cost)]),
+      ])
+    );
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
+        el(
+          "div",
+          { class: "busbar-lines" },
+          rows.length ? rows : [el("div", { class: "busbar-empty" }, ["No breakdown available."])]
+        ),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Total"]),
+          el("span", { class: "mono" }, ["\u20B1" + formatMoney(data.cost)]),
+        ]),
+      ]),
+    ]);
+  }
+
   function renderBoxDimensionsBlock(data) {
     if (!data) {
       return el("div", { class: "card" }, [
@@ -969,6 +1044,10 @@
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main clearance (AT " + main.at + ")"]),
             el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main lug factor (" + (data.clearanceRow ? data.clearanceRow.mgl_cat_no : "\u2014") + ")"]),
+            el("span", { class: "mono" }, [data.mainLugFactor !== null ? data.mainLugFactor.toFixed(1) + "mm" : "\u2014"]),
           ]),
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Branch rows (qty " + data.branchQty + ")"]),
@@ -1085,9 +1164,12 @@
 
     const boxDimensions = computeBoxDimensions();
 
+    const atsMts = computeAtsMtsCost();
+    if (atsMts && atsMts.cost) cost += atsMts.cost;
+
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
-      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions,
+      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions, atsMts,
     };
   }
 
@@ -1375,6 +1457,23 @@
     ]);
     wrap.appendChild(boxSection);
 
+    // ATS/MTS price (only when that panel type is selected)
+    if (totals.atsMts) {
+      const atsMtsSection = el("div", { class: "section" }, [
+        el("h2", {}, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
+        el("p", { class: "sub" }, [
+          panelType === "MTS/ MTS MDP"
+            ? "Bending cost from the ATS/MTS table's total length, at the main breaker's own busbar price."
+            : "Bending cost, plus controller and accessories, from the ATS/MTS table.",
+        ]),
+        renderAtsMtsBlock(totals.atsMts),
+        totals.atsMts.exceedsTable
+          ? el("div", { class: "warn" }, ["Main breaker's AT/pole combination isn't in the ATS/MTS table \u2014 needs a manual quote."])
+          : null,
+      ]);
+      wrap.appendChild(atsMtsSection);
+    }
+
     // Receipt
     const surchargeActive =
       (totals.mainBusbar && totals.mainBusbar.surcharge) ||
@@ -1463,6 +1562,12 @@
         el("span", {}, ["Neutral busbar"]),
         el("span", { class: "mono" }, ["\u20B1" + formatMoney(neutralCost)]),
       ]),
+      totals.atsMts
+        ? el("div", { class: "receipt-line" }, [
+            el("span", {}, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
+            el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.atsMts.cost)]),
+          ])
+        : null,
 
       el("div", { class: "receipt-line subtotal" }, [
         el("span", {}, ["Subtotal"]),

@@ -36,3 +36,21 @@ const SEED_LUG_DIMENSIONS = [
   { cat_no: "MGLA-1000", wire_range: "1000\u2013500 MCM", bolt_size_in: "5/8\"", metric_bolt_mm: 15.88, L: 85.70, W: 44.50, G: 41.25, H: 49.20, F: 12.70, std_pkg: 10 },
 ];
 const LUG_DIMENSIONS = [];
+
+// ATS/MTS bending, motor, controller & accessories reference, by main AT
+// range and pole count. AT is stored as min/max (single-value rows have
+// min === max), same convention as the busbars table.
+const SEED_ATS_MTS = [
+  { min: 50, max: 100, pole: 2, bend_1st: 100, bend_2nd: 100, bend_hor: 200, bend_3rd: 100, bend_4th: 100, total_length_mm: 600, motor: 8000, controller: 3000, accessories: 6000 },
+  { min: 125, max: 250, pole: 2, bend_1st: 150, bend_2nd: 100, bend_hor: 320, bend_3rd: 150, bend_4th: 100, total_length_mm: 820, motor: 10000, controller: 3000, accessories: 6000 },
+  { min: 50, max: 100, pole: 3, bend_1st: 100, bend_2nd: 100, bend_hor: 300, bend_3rd: 100, bend_4th: 100, total_length_mm: 700, motor: 8000, controller: 3000, accessories: 6000 },
+  { min: 125, max: 250, pole: 3, bend_1st: 150, bend_2nd: 100, bend_hor: 320, bend_3rd: 150, bend_4th: 100, total_length_mm: 820, motor: 10000, controller: 3000, accessories: 6000 },
+  { min: 320, max: 320, pole: 3, bend_1st: 200, bend_2nd: 150, bend_hor: 400, bend_3rd: 200, bend_4th: 150, total_length_mm: 1100, motor: 16000, controller: 3000, accessories: 6000 },
+  { min: 350, max: 350, pole: 3, bend_1st: 200, bend_2nd: 150, bend_hor: 400, bend_3rd: 200, bend_4th: 150, total_length_mm: 1100, motor: 16000, controller: 3000, accessories: 6000 },
+  { min: 400, max: 400, pole: 3, bend_1st: 200, bend_2nd: 150, bend_hor: 400, bend_3rd: 200, bend_4th: 150, total_length_mm: 1100, motor: 16000, controller: 3000, accessories: 6000 },
+  { min: 500, max: 500, pole: 3, bend_1st: 250, bend_2nd: 150, bend_hor: 400, bend_3rd: 250, bend_4th: 150, total_length_mm: 1200, motor: 19000, controller: 13000, accessories: 8000 },
+  { min: 600, max: 630, pole: 3, bend_1st: 250, bend_2nd: 150, bend_hor: 400, bend_3rd: 250, bend_4th: 150, total_length_mm: 1200, motor: 19000, controller: 13000, accessories: 8000 },
+  { min: 700, max: 700, pole: 3, bend_1st: 300, bend_2nd: 200, bend_hor: 450, bend_3rd: 300, bend_4th: 200, total_length_mm: 1450, motor: 32000, controller: 15000, accessories: 8000 },
+  { min: 800, max: 800, pole: 3, bend_1st: 300, bend_2nd: 200, bend_hor: 450, bend_3rd: 300, bend_4th: 200, total_length_mm: 1450, motor: 32000, controller: 15000, accessories: 8000 },
+];
+const ATS_MTS = [];

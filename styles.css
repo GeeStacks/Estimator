@@ -566,6 +566,38 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   background: var(--white);
 }
 
+.po-print-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.po-print-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.po-print-textarea {
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  font-weight: 400;
+  color: var(--ink);
+  resize: vertical;
+}
+@media (max-width: 720px) {
+  .po-print-fields { grid-template-columns: 1fr; }
+}
+
+/* Print-only sheet: hidden on screen, shown (and everything else hidden)
+   when printing — see the @media print block at the end of this file. */
+.print-only { display: none; }
+
 /* PO Creation Tool */
 .po-toolbar {
   display: flex;
@@ -675,4 +707,75 @@ table.po-table td, table.po-table th { vertical-align: top; }
   .header svg { width: 96px; height: 34px; }
   .summary { flex-direction: column; }
   .summary .total { text-align: left; }
+}
+
+/* ===== Print sheet (PO Creation Tool -> Print / Save as PDF) ===== */
+.po-print-sheet {
+  background: #fff;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  padding: 0;
+}
+.po-print-header {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #000;
+  padding-bottom: 10px;
+}
+.po-print-title {
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+table.po-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+table.po-print-table th, table.po-print-table td {
+  border: 1px solid #000;
+  padding: 6px 8px;
+  vertical-align: top;
+  text-align: left;
+}
+table.po-print-table th { background: #eee; font-weight: 700; }
+table.po-print-table .po-item-no { width: 40px; text-align: center; }
+table.po-print-table .po-qty { width: 50px; text-align: center; }
+table.po-print-table .po-unit { width: 60px; }
+table.po-print-table .po-cost { width: 100px; text-align: right; white-space: nowrap; }
+table.po-print-table pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11px;
+}
+.po-print-total {
+  text-align: right;
+  font-weight: 700;
+  font-size: 13px;
+  margin-top: 10px;
+}
+.po-print-footer {
+  white-space: pre-wrap;
+  font-size: 11px;
+  margin-top: 24px;
+  border-top: 1px solid #000;
+  padding-top: 10px;
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .print-only, .print-only * { visibility: visible; }
+  .print-only {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+  .no-print { display: none !important; }
 }
