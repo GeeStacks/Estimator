@@ -252,7 +252,7 @@
   function computeAtsMtsCost() {
     if (panelType !== "MTS/ MTS MDP" && panelType !== "ATS/ATS MDP") return null;
     const mainData = resolveRowData(main);
-    if (!mainData) return null;
+    if (!mainData) return { cost: 0, breakdown: [], atsRow: null, exceedsTable: false, noMain: true };
 
     const atsRow = lookupAtsMts(mainData.at, mainData.poles);
     if (!atsRow) return { cost: 0, breakdown: [], atsRow: null, exceedsTable: true };
@@ -293,15 +293,18 @@
 
     const clearanceRow = lookupClearance(mainData.at);
     const mainClearance = clearanceRow ? clearanceRow.bending_clearance_mm : null;
-    const mainLugRow = clearanceRow ? lookupLugDimensions(clearanceRow.mgl_cat_no) : null;
-    const mainLugFactor = mainLugRow ? mainLugRow.H * 0.6 * (clearanceRow.parallel_count || 1) : null;
+    // MCB breakers don't use mech lugs, so their lug factor is 0 (not
+    // looked up from the lug table at all).
+    const mainLugRow = clearanceRow && mainData.type !== "MCB" ? lookupLugDimensions(clearanceRow.mgl_cat_no) : null;
+    const mainLugFactor =
+      mainData.type === "MCB" ? 0 : mainLugRow ? mainLugRow.H * 0.6 * (clearanceRow.parallel_count || 1) : null;
+    const mainHeight = mainData.height || 0;
 
     const branchEntries = branches
       .map((sel) => ({ sel, rowData: resolveRowData(sel) }))
       .filter((x) => x.rowData);
     const branchQty = branches.reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
     const branchWidth = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.width || 0)) : 0;
-    const branchHeight = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.height || 0)) : 0;
 
     const gap = CONSTANTS.box_main_branch_gap_mm || 0;
     const groundStand = CONSTANTS.box_insulator_ground_stand_mm || 0;
@@ -312,7 +315,7 @@
 
     const height =
       mainClearance !== null && mainLugFactor !== null
-        ? mainClearance + mainLugFactor + gap + branchBlockHeight + groundStand + backplateClearance
+        ? mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
         : null;
 
     // ---- First/Second branch: which branches set each side's lug
@@ -345,6 +348,10 @@
       if (!entry) return { at: null, lugFactor: null, sideClearance: null, exceeds: false };
       const cRow = lookupClearance(entry.rowData.at);
       if (!cRow) return { at: entry.rowData.at, lugFactor: null, sideClearance: null, exceeds: true };
+      // MCB breakers don't use mech lugs, so their lug factor is 0.
+      if (entry.rowData.type === "MCB") {
+        return { at: entry.rowData.at, lugFactor: 0, sideClearance: cRow.bending_clearance_mm, exceeds: false };
+      }
       const lRow = lookupLugDimensions(cRow.mgl_cat_no);
       const lugFactor = lRow ? lRow.H * 0.6 * (cRow.parallel_count || 1) : null;
       return { at: entry.rowData.at, lugFactor, sideClearance: cRow.bending_clearance_mm, exceeds: !lRow };
@@ -354,19 +361,33 @@
     const side2 = sideFactorsFor(secondBranch);
     const sidesResolved = side1.lugFactor !== null && side2.lugFactor !== null;
 
-    const width =
-      mainClearance !== null && sidesResolved
-        ? mainData.width + branchHeight + mainClearance +
-          (side1.lugFactor + side1.sideClearance) +
-          (side2.lugFactor + side2.sideClearance)
-        : null;
+    // Branch height side A: the highest-AT branch's own height.
+    // Branch height side B: the next-highest-AT branch (excluding side A)
+    // whose own quantity is more than 1. If every other branch is a
+    // lone unit (qty 1), side B height is 0.
+    const heightSideA = firstBranch ? firstBranch.rowData.height || 0 : 0;
+    const heightSideBEntry = sortedByAt.filter((x) => x !== firstBranch).find((x) => x.sel.qty > 1) || null;
+    const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
+
+    const width = sidesResolved
+      ? mainData.width + heightSideA + heightSideB +
+        (side1.lugFactor + side1.sideClearance) +
+        (side2.lugFactor + side2.sideClearance)
+      : null;
+
+    // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
+    const depth = mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
 
     return {
-      mainClearance, mainLugFactor, gap, branchBlockHeight, branchRows, branchQty, branchWidth, branchHeight,
+      mainClearance, mainLugFactor, mainHeight, gap, branchBlockHeight, branchRows, branchQty, branchWidth,
+      heightSideA, heightSideB, heightSideBEntry,
       groundStand, backplateClearance, clearanceRow,
-      mainWidth: mainData.width, height, width,
+      mainWidth: mainData.width, height, width, depth,
       firstBranch, secondBranch, side1, side2,
-      exceedsTable: !clearanceRow || !mainLugRow || (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+      exceedsTable:
+        !clearanceRow ||
+        (mainData.type !== "MCB" && !mainLugRow) ||
+        (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -467,10 +488,11 @@
     const mainBend = CONSTANTS.main_bend_mm || 0;
     const excessBend = CONSTANTS.excess_bend_mm || 0;
     const poles = mainData.poles;
-    // bends belong to the main feed itself, so they scale with the
-    // main breaker's own pole count; branch cuts already carry their
-    // own pole count individually.
-    const totalLength = sumLengths + poles * (mainBend + excessBend);
+    // Bends belong to the main feed connecting to the branch busbar, so
+    // they only apply once there's actually a branch busbar to bend
+    // toward. With no branches selected, there's nothing to bend to.
+    const hasBranches = groups.length > 0;
+    const totalLength = sumLengths + (hasBranches ? poles * (mainBend + excessBend) : 0);
 
     const BAR_LENGTH = 6000;
     const pctOfBar = totalLength / BAR_LENGTH;
@@ -482,7 +504,7 @@
     if (cost !== null && surcharge) cost *= 1.3;
 
     return {
-      poles, sumLengths, mainBend, excessBend, totalLength, breakdown,
+      poles, sumLengths, mainBend, excessBend, totalLength, breakdown, hasBranches,
       pctOfBar, busbarPrice, busbarNeeded: busbar ? busbar.needed : null,
       cost, surcharge, exceedsTable: !busbar,
     };
@@ -596,6 +618,7 @@
   let giGauge = "16";
   let poItemName = "PANEL BOARD";
   let poSaveMessage = "";
+  let boxPrice = 0;
 
   function updateSelection(row, field, value) {
     const next = { ...row, [field]: value };
@@ -764,16 +787,24 @@
     );
     return el("div", { class: "busbar-block" }, [
       el("div", { class: "busbar-block-title" }, ["Main busbar (vertical bend)"]),
-      el("div", { class: "busbar-lines" }, rows.concat([
-        el("div", { class: "busbar-line" }, [
-          el("span", {}, ["Main bend"]),
-          el("span", { class: "mono" }, [data.mainBend + "mm"]),
-        ]),
-        el("div", { class: "busbar-line" }, [
-          el("span", {}, ["Excess bend"]),
-          el("span", { class: "mono" }, [data.excessBend + "mm"]),
-        ]),
-      ])),
+      el(
+        "div",
+        { class: "busbar-lines" },
+        data.hasBranches
+          ? rows.concat([
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Main bend"]),
+                el("span", { class: "mono" }, [data.mainBend + "mm"]),
+              ]),
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Excess bend"]),
+                el("span", { class: "mono" }, [data.excessBend + "mm"]),
+              ]),
+            ])
+          : rows.concat([
+              el("div", { class: "busbar-empty" }, ["No branches selected \u2014 bend allowance not applied."]),
+            ])
+      ),
       el("div", { class: "busbar-total" }, [
         el("span", {}, ["\u00d7 " + data.poles + " poles"]),
         el("span", { class: "mono" }, [Math.round(data.totalLength) + "mm total"]),
@@ -1006,6 +1037,14 @@
   }
 
   function renderAtsMtsBlock(data) {
+    if (data.noMain) {
+      return el("div", { class: "card" }, [
+        el("div", { class: "busbar-block" }, [
+          el("div", { class: "busbar-block-title" }, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
+          el("div", { class: "busbar-empty" }, ["Select a main breaker to calculate."]),
+        ]),
+      ]);
+    }
     const rows = data.breakdown.map((b) =>
       el("div", { class: "busbar-line" }, [
         el("span", {}, [b.label]),
@@ -1037,9 +1076,17 @@
         ]),
       ]);
     }
+
+    const sizeText =
+      data.height !== null && data.width !== null
+        ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm \u00d7 " + data.depth + "mm"
+        : "no clearance data for this AT";
+
     return el("div", { class: "card" }, [
       el("div", { class: "busbar-block" }, [
         el("div", { class: "busbar-block-title" }, ["Box dimensions"]),
+
+        el("div", { class: "busbar-subtitle" }, ["Height"]),
         el("div", { class: "busbar-lines" }, [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main clearance (AT " + main.at + ")"]),
@@ -1047,11 +1094,55 @@
           ]),
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main lug factor (" + (data.clearanceRow ? data.clearanceRow.mgl_cat_no : "\u2014") + ")"]),
-            el("span", { class: "mono" }, [data.mainLugFactor !== null ? data.mainLugFactor.toFixed(1) + "mm" : "\u2014"]),
+            el("span", { class: "mono" }, [
+              data.mainLugFactor !== null
+                ? (data.mainLugFactor === 0 ? "0mm (MCB, no lugs)" : data.mainLugFactor.toFixed(1) + "mm")
+                : "\u2014",
+            ]),
           ]),
           el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Branch rows (qty " + data.branchQty + ")"]),
-            el("span", { class: "mono" }, [String(data.branchRows)]),
+            el("span", {}, ["Main breaker height"]),
+            el("span", { class: "mono" }, [data.mainHeight + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main/branch gap"]),
+            el("span", { class: "mono" }, [data.gap + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch block (rows " + data.branchRows + " \u00d7 " + data.branchWidth + "mm, qty " + data.branchQty + ")"]),
+            el("span", { class: "mono" }, [Math.round(data.branchBlockHeight) + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Insulator/ground stand"]),
+            el("span", { class: "mono" }, [data.groundStand + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Backplate clearance"]),
+            el("span", { class: "mono" }, [data.backplateClearance + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Height subtotal"]),
+            el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
+          ]),
+        ]),
+
+        el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main width"]),
+            el("span", { class: "mono" }, [data.mainWidth + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch height side A (AT " + (data.firstBranch ? data.firstBranch.rowData.at : "\u2014") + ")"]),
+            el("span", { class: "mono" }, [data.heightSideA + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Branch height side B (" +
+                (data.heightSideBEntry ? "AT " + data.heightSideBEntry.rowData.at : "no qty>1 branch") +
+                ")",
+            ]),
+            el("span", { class: "mono" }, [data.heightSideB + "mm"]),
           ]),
           el("div", { class: "busbar-line" }, [
             el("span", {}, [
@@ -1073,14 +1164,23 @@
                 : "\u2014",
             ]),
           ]),
-        ]),
-        el("div", { class: "busbar-total" }, [
-          el("span", {}, ["Height \u00d7 Width"]),
-          el("span", { class: "mono" }, [
-            data.height !== null && data.width !== null
-              ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm"
-              : "no clearance data for this AT",
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Width subtotal"]),
+            el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
           ]),
+        ]),
+
+        el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Depth"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Depth (based on main AT " + main.at + ")"]),
+            el("span", { class: "mono" }, [data.depth + "mm"]),
+          ]),
+        ]),
+
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Box size (L \u00d7 W \u00d7 D)"]),
+          el("span", { class: "mono" }, [sizeText]),
         ]),
       ]),
     ]);
@@ -1167,9 +1267,12 @@
     const atsMts = computeAtsMtsCost();
     if (atsMts && atsMts.cost) cost += atsMts.cost;
 
+    cost += boxPrice;
+
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
       assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions, atsMts,
+      boxPrice,
     };
   }
 
@@ -1298,7 +1401,7 @@
         el("table", { class: "breaker-table" }, [
           el("thead", {}, [
             el("tr", {}, [
-              el("th", { class: "narrow" }, ["Ckt"]),
+              el("th", { class: "narrow" }, ["#"]),
               el("th", {}, ["Brand"]),
               el("th", {}, ["AT"]),
               el("th", {}, ["Poles"]),
@@ -1449,11 +1552,22 @@
     // Box dimensions
     const boxSection = el("div", { class: "section" }, [
       el("h2", {}, ["Box dimensions"]),
-      el("p", { class: "sub" }, ["Estimated enclosure height and width from the main breaker, branches, and clearance table."]),
+      el("p", { class: "sub" }, ["Estimated enclosure length, width, and depth from the main breaker, branches, and clearance table."]),
       renderBoxDimensionsBlock(totals.boxDimensions),
       totals.boxDimensions && totals.boxDimensions.exceedsTable
         ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
         : null,
+      el("div", { class: "po-save-row", style: "margin-top:14px;" }, [
+        el("label", { class: "receipt-adjust-label", style: "flex:0 0 auto;" }, ["Box price"]),
+        el("input", {
+          type: "number",
+          class: "po-save-name",
+          style: "flex:0 1 160px;",
+          value: String(boxPrice),
+          oninput: (e) => { boxPrice = parseFloat(e.target.value) || 0; },
+          onchange: render,
+        }),
+      ]),
     ]);
     wrap.appendChild(boxSection);
 
@@ -1566,6 +1680,12 @@
         ? el("div", { class: "receipt-line" }, [
             el("span", {}, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
             el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.atsMts.cost)]),
+          ])
+        : null,
+      totals.boxPrice
+        ? el("div", { class: "receipt-line" }, [
+            el("span", {}, ["Box price"]),
+            el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.boxPrice)]),
           ])
         : null,
 
@@ -1694,7 +1814,7 @@
       branches: branches.map((b) => ({ ...b })),
       useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar,
       profitMode, profitValue, discountMode, discountValue,
-      mountingType, nemaRating, giGauge,
+      mountingType, nemaRating, giGauge, boxPrice,
       mainResolved, branchesResolved,
       supplyDescriptionText: supplyDescription(supplyVoltage, mainResolved ? mainResolved.poles : null),
       grandTotal: receipt.grandTotal,
@@ -1717,6 +1837,7 @@
     mountingType = config.mountingType || "SURFACE MOUNTED";
     nemaRating = config.nemaRating || "NEMA-1";
     giGauge = config.giGauge || "16";
+    boxPrice = config.boxPrice || 0;
     poSaveMessage = "";
     render();
   };
