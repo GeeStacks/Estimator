@@ -7,7 +7,7 @@
 
   const TABLE_NAMES = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "ats_mts",
+    "clearance", "lug_dimensions", "ats_mts",
   ];
 
   function hardcodedSeedFor(name) {
@@ -26,6 +26,8 @@
         return Object.entries(CONSTANTS).map(([name, value], i) => ({ id: i + 1, name, value }));
       case "clearance":
         return SEED_CLEARANCE.map((r, i) => ({ id: i + 1, ...r }));
+      case "lug_dimensions":
+        return SEED_LUG_DIMENSIONS.map((r, i) => ({ id: i + 1, ...r }));
       case "ats_mts":
         return SEED_ATS_MTS.map((r, i) => ({ id: i + 1, ...r }));
       default:
@@ -117,6 +119,7 @@
     replaceArrayContents(ASSEMBLIES["3P"], DB.assemblies_3p.map(stripId));
     replaceArrayContents(MECH_LUGS, DB.mech_lugs.map(stripId));
     replaceArrayContents(CLEARANCE, DB.clearance.map(stripId));
+    replaceArrayContents(LUG_DIMENSIONS, DB.lug_dimensions.map(stripId));
     replaceArrayContents(ATS_MTS, DB.ats_mts.map(stripId));
     Object.keys(CONSTANTS).forEach((k) => delete CONSTANTS[k]);
     DB.constants.forEach((c) => { CONSTANTS[c.name] = c.value; });
@@ -154,24 +157,77 @@
     return changed;
   }
 
-  // Adds the merged lug-dimension columns (cat_no, L, W, G, H, F, etc.) to
-  // any mech_lugs row saved before the two tables were combined, matching
-  // by ampere_trip against the current hardcoded defaults.
-  function healMechLugs(rows) {
-    const defaultsByAt = {};
-    SEED_MECH_LUGS.forEach((r) => { defaultsByAt[r.ampere_trip] = r; });
+  const MECH_LUG_CATALOG_BY_AT = {
+    16: "MGL-A6", 20: "MGL-A6", 25: "MGL-A6", 30: "MGL-A6", 32: "MGL-A6",
+    40: "MGL-A6", 50: "MGL-A6", 60: "MGL-A6", 63: "MGL-A0", 75: "MGL-A0",
+    80: "MGL-A0", 100: "MGL-A0", 125: "MGLA-250", 160: "MGLA-250",
+    180: "MGLA-250", 200: "MGLA-250", 225: "MGLA-250", 250: "MGLA-250",
+    315: "MGLA-350", 320: "MGLA-350", 350: "MGLA-500", 400: "MGLA-350",
+    500: "MGLA-350", 600: "MGLA-350", 630: "MGLA-350", 700: "MGLA-500",
+    800: "MGLA-500", 1000: "MGLA-600", 1250: "MGLA-800", 1600: "MGLA-800",
+    2000: "MGLA-1000",
+  };
+
+  function healMechLugCatalog(rows) {
     let changed = false;
     rows.forEach((row) => {
-      if (row.cat_no === undefined) {
-        const def = defaultsByAt[row.ampere_trip];
-        if (def) {
-          Object.assign(row, {
-            cat_no: def.cat_no, wire_range: def.wire_range, bolt_size_in: def.bolt_size_in,
-            metric_bolt_mm: def.metric_bolt_mm, L: def.L, W: def.W, G: def.G, H: def.H, F: def.F,
-            std_pkg: def.std_pkg,
-          });
+      if (row.cat_no) return;
+      const catNo = MECH_LUG_CATALOG_BY_AT[Number(row.ampere_trip)];
+      if (catNo) {
+        row.cat_no = catNo;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  const LUG_RELATIVE_MMSQ_BY_CAT = {
+    "MGL-A6": "10/14MMSQ",
+    "MGL-A0": "35/50MMSQ",
+    "MGLA-250": "125MMSQ",
+    "MGLA-300": "300MMSQ",
+    "MGLA-350": "200MMSQ",
+    "MGLA-500": "250MMSQ",
+    "MGLA-600": "300MMSQ",
+    "MGLA-800": "350/400MMSQ",
+    "MGLA-1000": "500MMSQ",
+  };
+
+  function healLugRelativeMmsq(rows) {
+    let changed = false;
+    rows.forEach((row) => {
+      if (row.relative_mmsq_size) return;
+      const size = LUG_RELATIVE_MMSQ_BY_CAT[row.cat_no];
+      if (size) {
+        row.relative_mmsq_size = size;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function normalizeBusbars(rows) {
+    let changed = false;
+    rows.forEach((row) => {
+      if (row.at === undefined || row.at === null) {
+        row.at = row.max !== undefined ? row.max : row.min || 0;
+        changed = true;
+      }
+      if (row.type === "MCB") {
+        if (row.needed !== "3MM X 10MM X 20FT") {
+          row.needed = "3MM X 10MM X 20FT";
           changed = true;
         }
+        if (row.price !== 2500) {
+          row.price = 2500;
+          changed = true;
+        }
+      }
+      if (row.min !== undefined || row.max !== undefined || row.condition !== undefined) {
+        delete row.min;
+        delete row.max;
+        delete row.condition;
+        changed = true;
       }
     });
     return changed;
@@ -183,20 +239,27 @@
       let seed = await idbGet(idbHandle, SEEDS_STORE, name);
       if (!seed) {
         seed = hardcodedSeedFor(name);
+        if (name === "busbars") normalizeBusbars(seed);
         await idbPut(idbHandle, SEEDS_STORE, name, seed);
-      } else if (name === "constants" && healConstants(seed)) {
-        await idbPut(idbHandle, SEEDS_STORE, name, seed);
-      } else if (name === "mech_lugs" && healMechLugs(seed)) {
-        await idbPut(idbHandle, SEEDS_STORE, name, seed);
+      } else {
+        const seedChanged =
+          (name === "constants" && healConstants(seed)) ||
+          (name === "mech_lugs" && healMechLugCatalog(seed)) ||
+          (name === "lug_dimensions" && healLugRelativeMmsq(seed)) ||
+          (name === "busbars" && normalizeBusbars(seed));
+        if (seedChanged) await idbPut(idbHandle, SEEDS_STORE, name, seed);
       }
       let live = await idbGet(idbHandle, TABLES_STORE, name);
       if (!live) {
         live = seed.map((r) => ({ ...r }));
         await idbPut(idbHandle, TABLES_STORE, name, live);
-      } else if (name === "constants" && healConstants(live)) {
-        await idbPut(idbHandle, TABLES_STORE, name, live);
-      } else if (name === "mech_lugs" && healMechLugs(live)) {
-        await idbPut(idbHandle, TABLES_STORE, name, live);
+      } else {
+        const liveChanged =
+          (name === "constants" && healConstants(live)) ||
+          (name === "mech_lugs" && healMechLugCatalog(live)) ||
+          (name === "lug_dimensions" && healLugRelativeMmsq(live)) ||
+          (name === "busbars" && normalizeBusbars(live));
+        if (liveChanged) await idbPut(idbHandle, TABLES_STORE, name, live);
       }
       DB[name] = live;
     }
@@ -261,6 +324,7 @@
       for (const name of TABLE_NAMES) {
         if (!Array.isArray(data[name])) continue;
         const rows = data[name].map((r, i) => ({ id: i + 1, ...r }));
+        if (name === "busbars") normalizeBusbars(rows);
         DB[name] = rows;
         await idbPut(idbHandle, SEEDS_STORE, name, rows.map((r) => ({ ...r })));
         await idbPut(idbHandle, TABLES_STORE, name, rows);

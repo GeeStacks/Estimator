@@ -1,4 +1,4 @@
-const CACHE_NAME = "panel-board-builder-v4";
+const CACHE_NAME = "panel-board-builder-v9";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -14,7 +14,9 @@ const APP_SHELL = [
   "./box_seed.js",
   "./manifest.json",
   "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./icons/icon-512.png",
+  "./icons/jn-controls-logo.png",
+  "./icons/app-logo.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -38,15 +40,14 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => cached);
-    })
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

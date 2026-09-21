@@ -2,33 +2,57 @@
   const root = document.getElementById("po-app");
   let quotations = [];
   let editingId = null;
-  let printHeader = localStorage.getItem("po_print_header") || "";
-  let printFooter = localStorage.getItem("po_print_footer") || "";
-  let logoDataUrl = localStorage.getItem("po_logo") || "";
+  let showPreview = false;
+  const defaultPrintHeader = {
+    companyName: "CONTROLS ENGINEERING SERVICES",
+    address: "Fuentes St., Iloilo City",
+    phone: "Phone: 09094125826/09770182397",
+    email: "Email: jncontrolsengineeringservices@gmail.com",
+    subject: "SUPPLY OF PANEL BOARDS",
+    attention: "PROCUREMENT",
+    company: "",
+    project: "",
+    reference: "",
+    date: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+  };
+  let printHeader;
+  try {
+    printHeader = { ...defaultPrintHeader, ...JSON.parse(localStorage.getItem("po_print_header") || "{}") };
+  } catch (error) {
+    printHeader = { ...defaultPrintHeader };
+  }
+  const defaultPrintFooter = {
+    validityDate: "August 11, 2026",
+    deliveryAddress: "Iloilo City and Bacolod City",
+    leadTime: "20–30 days upon receipt of the 50% down payment.",
+    paymentTerms: "50% down payment upon confirmation of order. The remaining 50% balance is due prior to delivery.",
+    warranty: "The equipment is covered by a one-year warranty, commencing upon delivery and on-site acceptance by the client.",
+    paymentMethod: "Cash or Bank Deposit",
+    bank: "METROBANK",
+    accountName: "JN CONTROLS ENGINEERING SERVICES",
+    accountNumber: "2993299174728",
+    preparedBy: "ENGR. NICO JOHN SEASAT",
+    preparedTitle: "Manager",
+    preparedCompany: "JN CONTROLS ENGINEERING SERVICES",
+    approvedBy: "",
+    approvedTitle: "",
+  };
+  let printFooter;
+  try {
+    const savedFooter = JSON.parse(localStorage.getItem("po_print_footer") || "null");
+    printFooter = savedFooter && typeof savedFooter === "object"
+      ? { ...defaultPrintFooter, ...savedFooter }
+      : { ...defaultPrintFooter };
+  } catch (error) {
+    printFooter = { ...defaultPrintFooter };
+  }
 
-  // Downscales the chosen image before storing it (keeps localStorage
-  // small and print output crisp without a giant embedded file).
-  function loadLogoFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = reject;
-        img.onload = () => {
-          const maxDim = 300;
-          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/png"));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+  function savePrintHeader() {
+    localStorage.setItem("po_print_header", JSON.stringify(printHeader));
+  }
+
+  function savePrintFooter() {
+    localStorage.setItem("po_print_footer", JSON.stringify(printFooter));
   }
 
   function el(tag, attrs, children) {
@@ -161,7 +185,7 @@
   // Static, print-only rendering of the same data — plain text instead of
   // inputs/buttons, plus the header/footer. Kept in sync on every render()
   // and shown only by the @media print rules in styles.css.
-  function renderPrintSheet(grandTotal) {
+  function renderPrintSheet(grandTotal, livePreview) {
     const rows = quotations.map((q, i) =>
       el("tr", {}, [
         el("td", { class: "po-item-no" }, [String(i + 1)]),
@@ -173,14 +197,45 @@
       ])
     );
 
-    return el("div", { class: "print-only po-print-sheet" }, [
-      printHeader || logoDataUrl
-        ? el("div", { class: "po-print-top-row" }, [
-            printHeader ? el("div", { class: "po-print-header" }, [printHeader]) : el("div", {}, []),
-            logoDataUrl ? el("img", { class: "po-print-logo", src: logoDataUrl, alt: "Logo" }) : null,
-          ])
-        : null,
-      el("h1", { class: "po-print-title" }, ["Purchase Order"]),
+    const projectDetails = [
+      ["SUBJECT", printHeader.subject],
+      ["ATTENTION", printHeader.attention],
+      ["COMPANY NAME", printHeader.company],
+      ["PROJECT NAME", printHeader.project],
+      ["REF. NUMBER", printHeader.reference],
+      ["DATE", printHeader.date],
+    ].map(([label, value]) =>
+      el("div", { class: "po-letterhead-detail" }, [
+        el("span", { class: "po-letterhead-label" }, [label + ":"]),
+        el("span", {}, [value]),
+      ])
+    );
+
+    function renderLetterhead() {
+      return el("div", { class: "po-letterhead" }, [
+        el("div", { class: "po-letterhead-brand" }, [
+          el("img", {
+            class: "po-letterhead-logo",
+            src: "icons/jn-controls-logo.png",
+            alt: printHeader.companyName,
+          }),
+        ]),
+        el("div", { class: "po-letterhead-contact" }, [
+          el("div", {}, [printHeader.address]),
+          el("div", {}, [printHeader.phone]),
+          el("div", {}, [printHeader.email]),
+        ]),
+      ]);
+    }
+
+    function renderProjectDetails() {
+      return el("div", { class: "po-letterhead-details" }, projectDetails);
+    }
+
+    const mainPage = [
+      renderLetterhead(),
+      el("div", { class: "po-letterhead-rule" }),
+      renderProjectDetails(),
       el("table", { class: "po-print-table" }, [
         el("thead", {}, [
           el("tr", {}, [
@@ -193,10 +248,70 @@
           ]),
         ]),
         el("tbody", {}, rows.length ? rows : [el("tr", {}, [el("td", { colspan: "6" }, ["No line items."])])]),
+        el("tfoot", {}, [
+          el("tr", {}, [
+            el("td", { colspan: "5", class: "po-total-label" }, ["GRAND TOTAL"]),
+            el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(grandTotal)]),
+          ]),
+        ]),
       ]),
-      el("div", { class: "po-print-total" }, ["PO GRAND TOTAL: \u20B1" + formatMoney(grandTotal)]),
-      printFooter ? el("div", { class: "po-print-footer" }, [printFooter]) : null,
-    ]);
+      el("table", { class: "po-terms-table" }, [
+        el("tbody", {}, [
+          ["Delivery", "Delivery is included within " + printFooter.deliveryAddress + "."],
+          ["Lead Time", printFooter.leadTime],
+          ["Warranty", printFooter.warranty],
+          ["Payment Terms", printFooter.paymentTerms],
+        ].map(([label, detail]) => el("tr", {}, [
+          el("td", {}, [label]),
+          el("td", {}, [detail]),
+        ]))),
+      ]),
+      el("div", { class: "po-notes" }, [
+        el("div", { class: "po-notes-title" }, ["NOTES:"]),
+        el("div", {}, ["THIS OFFER IS GOOD UNTIL " + printFooter.validityDate.toUpperCase() + "."]),
+        el("div", {}, ["DELIVERY IS INCLUDED WITHIN " + printFooter.deliveryAddress.toUpperCase() + "."]),
+      ]),
+      el("h2", { class: "po-footer-section-title" }, ["PAYMENT DETAILS"]),
+      el("div", { class: "po-payment-details" }, [
+        el("div", {}, [el("strong", {}, ["Payment Method: "]), printFooter.paymentMethod]),
+        el("div", { class: "po-bank-name" }, [printFooter.bank]),
+        el("div", {}, [el("strong", {}, ["Account Name: "]), printFooter.accountName]),
+        el("div", {}, [el("strong", {}, ["Account Number: "]), printFooter.accountNumber]),
+      ]),
+    ];
+
+    const authorizationPage = [
+      el("div", { class: "po-authorization-page" }, [
+        el("div", { class: "po-signature-block" }, [
+          el("div", { class: "po-signature-label" }, ["PREPARED BY:"]),
+        el("div", { class: "po-signature-line-wrap" }, [
+          el("div", { class: "po-signature-line" }, []),
+          el("div", { class: "po-signature-name" }, [printFooter.preparedBy]),
+        ]),
+        el("div", { class: "po-signature-position" }, [printFooter.preparedTitle]),
+        el("div", { class: "po-signature-position" }, [printFooter.preparedCompany]),
+        el("div", { class: "po-signature-label" }, ["APPROVED BY:"]),
+        el("div", { class: "po-signature-line-wrap" }, [
+          el("div", { class: "po-signature-line" }, []),
+          el("div", { class: "po-signature-name" }, [printFooter.approvedBy || "Name / Signature"]),
+        ]),
+        el("div", { class: "po-signature-position" }, [printFooter.approvedTitle || "Position"]),
+        ]),
+      ]),
+    ];
+
+    return el("div", {
+      class: livePreview ? "po-print-sheet po-live-preview" : "print-only po-print-sheet",
+    }, mainPage.concat(authorizationPage));
+  }
+
+  function printPO() {
+    const originalTitle = document.title;
+    document.title = "";
+    window.addEventListener("afterprint", () => {
+      document.title = originalTitle;
+    }, { once: true });
+    window.print();
   }
 
   function render() {
@@ -265,75 +380,93 @@
     const printSection = el("div", { class: "section" }, [
       el("h2", {}, ["Print / Export as PDF"]),
       el("p", { class: "sub" }, [
-        "Shown at the top and bottom of the printed sheet. Use your browser's print dialog and choose \u201cSave as PDF.\u201d",
+        "Edit the letterhead and project details below, then use your browser's print dialog and choose \u201cSave as PDF.\u201d",
       ]),
-      el("div", { class: "po-print-fields" }, [
-        el("label", { class: "po-print-field-label" }, [
-          "Header",
-          el("textarea", {
-            class: "po-print-textarea",
-            rows: "3",
-            placeholder: "Company name, address, contact info\u2026",
-            oninput: (e) => {
-              printHeader = e.target.value;
-              localStorage.setItem("po_print_header", printHeader);
-            },
-          }, [printHeader]),
-        ]),
-        el("label", { class: "po-print-field-label" }, [
-          "Footer",
-          el("textarea", {
-            class: "po-print-textarea",
-            rows: "3",
-            placeholder: "Terms, prepared by, signature block\u2026",
-            oninput: (e) => {
-              printFooter = e.target.value;
-              localStorage.setItem("po_print_footer", printFooter);
-            },
-          }, [printFooter]),
-        ]),
-        el("label", { class: "po-print-field-label", style: "grid-column: 1 / -1;" }, [
-          "Logo (top right of the printed sheet)",
-          el("div", { class: "po-logo-row" }, [
-            logoDataUrl ? el("img", { class: "po-logo-preview", src: logoDataUrl, alt: "Logo preview" }) : null,
-            el("input", {
-              type: "file",
-              accept: "image/*",
-              onchange: async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                logoDataUrl = await loadLogoFile(file);
-                localStorage.setItem("po_logo", logoDataUrl);
-                render();
-              },
-            }),
-            logoDataUrl
-              ? el(
-                  "button",
-                  {
-                    class: "toolbar-btn po-delete-btn",
-                    onclick: () => {
-                      logoDataUrl = "";
-                      localStorage.removeItem("po_logo");
-                      render();
-                    },
-                  },
-                  ["Remove"]
-                )
-              : null,
+      el("div", { class: "po-form-paper" }, [
+        el("div", { class: "po-form-letterhead" }, [
+          el("img", {
+            class: "po-form-logo",
+            src: "icons/jn-controls-logo.png",
+            alt: printHeader.companyName,
+          }),
+          el("div", { class: "po-form-contact" }, [
+            el("strong", {}, [printHeader.companyName]),
+            el("div", {}, [printHeader.address]),
+            el("div", {}, [printHeader.phone]),
+            el("div", {}, [printHeader.email]),
           ]),
         ]),
+        el("div", { class: "po-form-section-title" }, ["PROJECT INFORMATION"]),
+      el("div", { class: "po-letterhead-editor" }, [
+        ...[
+          ["companyName", "Company name"],
+          ["address", "Address"],
+          ["phone", "Phone"],
+          ["email", "Email"],
+          ["subject", "Subject"],
+          ["attention", "Attention"],
+          ["company", "Company name on document"],
+          ["project", "Project name"],
+          ["reference", "Reference number"],
+          ["date", "Date"],
+        ].map(([key, label]) => el("label", { class: "po-print-field-label" }, [
+          label,
+          el("input", {
+            class: "po-print-input",
+            type: "text",
+            value: printHeader[key],
+            oninput: (e) => {
+              printHeader[key] = e.target.value;
+              savePrintHeader();
+            },
+          }),
+        ])),
+      ]),
+      el("div", { class: "po-form-section-title" }, ["TERMS AND PAYMENT"]),
+      el("div", { class: "po-letterhead-editor" }, [
+        ...[
+          ["validityDate", "Quotation validity date"],
+          ["deliveryAddress", "Delivery address"],
+          ["leadTime", "Lead time"],
+          ["paymentTerms", "Payment terms"],
+          ["warranty", "Warranty"],
+          ["paymentMethod", "Payment method"],
+          ["bank", "Bank"],
+          ["accountName", "Account name"],
+          ["accountNumber", "Account number"],
+          ["preparedBy", "Prepared by"],
+          ["preparedTitle", "Prepared-by title"],
+          ["preparedCompany", "Prepared-by company"],
+          ["approvedBy", "Approved by"],
+          ["approvedTitle", "Approved-by title"],
+        ].map(([key, label]) => el("label", { class: "po-print-field-label" }, [
+          label,
+          el("input", {
+            class: "po-print-input",
+            type: "text",
+            value: printFooter[key],
+            oninput: (e) => {
+              printFooter[key] = e.target.value;
+              savePrintFooter();
+            },
+          }),
+        ])),
+      ]),
       ]),
       el(
-        "button",
-        { class: "add-btn", onclick: () => window.print() },
-        ["Print / Save as PDF"]
+        "div",
+        { class: "po-preview-actions" },
+        [el(
+          "button",
+          { class: "add-btn", onclick: () => { render(); printPO(); } },
+          ["Print / Save as PDF"]
+        )]
       ),
     ]);
     wrap.appendChild(printSection);
 
     root.appendChild(wrap);
-    root.appendChild(renderPrintSheet(grandTotal));
+    root.appendChild(renderPrintSheet(grandTotal, false));
   }
 
   // ---- Bridge for the Builder tab's "Save to PO" control ----

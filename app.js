@@ -3,13 +3,14 @@
 
   // ---- Busbar helpers ----
   function sortedBusbarsForType(type) {
-    return BUSBARS.filter((b) => b.type === type).sort((a, b) => Number(a.min) - Number(b.min));
+    return BUSBARS.filter((b) => b.type === type).sort((a, b) => Number(a.at) - Number(b.at));
   }
 
   // Same bracket if it exists; otherwise round UP to the next higher one.
   function lookupBusbar(type, at) {
     const list = sortedBusbarsForType(type);
-    const idx = list.findIndex((b) => Number(at) <= Number(b.max));
+    if (type === "MCB") return list[0] || null;
+    const idx = list.findIndex((b) => Number(at) <= Number(b.at));
     return idx === -1 ? null : list[idx];
   }
 
@@ -33,7 +34,7 @@
   // neutral busbars alike.
   function lookupBusbarOneDown(type, at) {
     const list = sortedBusbarsForType(type);
-    const idx = list.findIndex((b) => Number(at) <= Number(b.max));
+    const idx = type === "MCB" ? 0 : list.findIndex((b) => Number(at) <= Number(b.at));
     if (idx === -1) return null; // AT exceeds every bracket for this type
     return stepDownByDistinctValue(list, idx, "needed");
   }
@@ -70,7 +71,8 @@
         if (!lug) {
           missing += main.qty;
         } else {
-          const totalSets = main.qty * rowData.poles * lug.sets * multiplier;
+          const effectiveMultiplier = panelType === "ECB" ? multiplier * 2 : multiplier;
+          const totalSets = main.qty * rowData.poles * lug.sets * effectiveMultiplier;
           const lineCost = totalSets * lug.price;
           cost += lineCost;
           const key = lug.ampere_trip + "|" + lug.mech_lugs_size;
@@ -80,7 +82,7 @@
     }
 
     const breakdown = Object.values(buckets).sort((a, b) => a.ampereTrip - b.ampereTrip);
-    return { cost, missing, breakdown, multiplier };
+    return { cost, missing, breakdown, multiplier: panelType === "ECB" ? multiplier * 2 : multiplier };
   }
 
   // Mech lugs cost across the branch breakers only (unchanged: one
@@ -90,7 +92,7 @@
     let cost = 0;
     let missing = 0;
 
-    branches.forEach((sel) => {
+    activeBranches().forEach((sel) => {
       if (sel.spare) return;
       const rowData = resolveRowData(sel);
       if (!rowData) return;
@@ -158,7 +160,7 @@
     }
 
     consider(main);
-    branches.forEach(consider);
+    activeBranches().forEach(consider);
 
     const breakdown = Object.values(buckets).sort((a, b) => a.ampereTrip - b.ampereTrip);
     return { cost, missing, breakdown };
@@ -230,7 +232,21 @@
   }
 
   function lookupLugDimensions(catNo) {
-    return MECH_LUGS.find((r) => r.cat_no === catNo) || null;
+    return LUG_DIMENSIONS.find((r) => r.cat_no === catNo) || null;
+  }
+
+  function lookupLugDimensionsForAt(at, clearanceRow) {
+    const mechLug = lookupMechLugs(at);
+    const catNo = mechLug && mechLug.cat_no ? mechLug.cat_no : clearanceRow && clearanceRow.mgl_cat_no;
+    return lookupLugDimensions(catNo);
+  }
+
+  function lugFactorMultiplier(at) {
+    return Number(at) >= 400 ? 1.0 : 0.7;
+  }
+
+  function activeBranches() {
+    return panelType === "ECB" ? [] : branches;
   }
 
   // Same-or-next-higher AT match against the ATS/MTS table, scoped to the
@@ -295,27 +311,46 @@
     const mainClearance = clearanceRow ? clearanceRow.bending_clearance_mm : null;
     // MCB breakers don't use mech lugs, so their lug factor is 0 (not
     // looked up from the lug table at all).
-    const mainLugRow = clearanceRow && mainData.type !== "MCB" ? lookupLugDimensions(clearanceRow.mgl_cat_no) : null;
+    const mainLugRow = clearanceRow && mainData.type !== "MCB"
+      ? lookupLugDimensionsForAt(mainData.at, clearanceRow)
+      : null;
     const mainLugFactor =
-      mainData.type === "MCB" ? 0 : mainLugRow ? mainLugRow.L * 0.6 * (clearanceRow.parallel_count || 1) : null;
+      mainData.type === "MCB"
+        ? 0
+        : mainLugRow
+          ? mainLugRow.L * lugFactorMultiplier(mainData.at) * (clearanceRow.parallel_count || 1)
+          : null;
     const mainHeight = mainData.height || 0;
 
-    const branchEntries = branches
+    const branchEntries = activeBranches()
       .map((sel) => ({ sel, rowData: resolveRowData(sel) }))
       .filter((x) => x.rowData);
-    const branchQty = branches.reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
+    const branchQty = activeBranches().reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
     const branchWidth = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.width || 0)) : 0;
 
     const gap = CONSTANTS.box_main_branch_gap_mm || 0;
     const groundStand = CONSTANTS.box_insulator_ground_stand_mm || 0;
     const backplateClearance = CONSTANTS.box_backplate_clearance_mm || 0;
 
-    const branchRows = Math.ceil(branchQty / 2);
-    const branchBlockHeight = branchWidth * branchRows;
+    // Pairing applies within each identical breaker group; different models
+    // cannot share a box row.
+    const groupedBranches = branchGroups();
+    const branchRows = groupedBranches.reduce((sum, group) => sum + Math.ceil(group.rawQty / 2), 0);
+    const branchBlockHeight = groupedBranches.reduce(
+      (sum, group) => sum + (group.rowData.width || 0) * Math.ceil(group.rawQty / 2),
+      0
+    );
+    const branchBreakdown = groupedBranches.map((group) => ({
+      width: group.rowData.width,
+      rows: Math.ceil(group.rawQty / 2),
+    }));
 
+    const isEcb = panelType === "ECB";
     const height =
       mainClearance !== null && mainLugFactor !== null
-        ? mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
+        ? isEcb
+          ? mainClearance + mainLugFactor + mainHeight + mainLugFactor + mainClearance
+          : mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
         : null;
 
     // ---- First/Second branch: which branches set each side's lug
@@ -352,8 +387,10 @@
       if (entry.rowData.type === "MCB") {
         return { at: entry.rowData.at, lugFactor: 0, sideClearance: cRow.bending_clearance_mm, exceeds: false };
       }
-      const lRow = lookupLugDimensions(cRow.mgl_cat_no);
-      const lugFactor = lRow ? lRow.L * 0.6 * (cRow.parallel_count || 1) : null;
+      const lRow = lookupLugDimensionsForAt(entry.rowData.at, cRow);
+      const lugFactor = lRow
+        ? lRow.L * lugFactorMultiplier(entry.rowData.at) * (cRow.parallel_count || 1)
+        : null;
       return { at: entry.rowData.at, lugFactor, sideClearance: cRow.bending_clearance_mm, exceeds: !lRow };
     }
 
@@ -369,33 +406,27 @@
     const heightSideBEntry = sortedByAt.filter((x) => x !== firstBranch).find((x) => x.sel.qty > 1) || null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
-    let width = sidesResolved
+    const width = sidesResolved
       ? mainData.width + heightSideA + heightSideB +
         (side1.lugFactor + side1.sideClearance) +
         (side2.lugFactor + side2.sideClearance)
       : null;
-
-    // If every branch is MCB (main can be anything) and the prefab
-    // assembly is used instead of computed busbars, width is fixed at a
-    // standard 400mm rather than derived from lug/clearance data.
-    const allMCB = branchEntries.length > 0 && branchEntries.every((x) => x.rowData.type === "MCB");
-    if (allMCB && useAssembly) {
-      width = 400;
-    }
 
     // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
     const depth = mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
 
     return {
       mainClearance, mainLugFactor, mainHeight, gap, branchBlockHeight, branchRows, branchQty, branchWidth,
+      isEcb,
+      branchBreakdown,
       heightSideA, heightSideB, heightSideBEntry,
       groundStand, backplateClearance, clearanceRow,
-      mainWidth: mainData.width, height, width, depth, widthFixed: allMCB && useAssembly,
+      mainWidth: mainData.width, height, width, depth,
       firstBranch, secondBranch, side1, side2,
       exceedsTable:
         !clearanceRow ||
         (mainData.type !== "MCB" && !mainLugRow) ||
-        (!(allMCB && useAssembly) && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+        (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -411,7 +442,7 @@
   // and compute total busbar cuts per group.
   function branchGroups() {
     const groups = {};
-    branches.forEach((sel) => {
+    activeBranches().forEach((sel) => {
       const rowData = resolveRowData(sel);
       if (!rowData) return;
       const key = [sel.brand, sel.model, sel.at, sel.poles].join("|");
@@ -420,6 +451,7 @@
     });
     return Object.values(groups).map((g) => ({
       rowData: g.rowData,
+      rawQty: g.rawQty,
       cuts: cutsForGroup(g.rawQty, g.rowData.poles),
     }));
   }
@@ -483,11 +515,13 @@
     groups.forEach((g) => {
       const w = g.rowData.width;
       if (w === null || w === undefined) return;
-      widthBuckets[w] = (widthBuckets[w] || 0) + g.cuts;
+      // Main busbar cuts represent breaker positions: each pair shares one
+      // position, independent of the breaker's pole count.
+      widthBuckets[w] = (widthBuckets[w] || 0) + Math.ceil(g.rawQty / 2);
     });
 
     let sumLengths = 0;
-    const breakdown = Object.entries(widthBuckets).map(([width, cuts]) => {
+    let breakdown = Object.entries(widthBuckets).map(([width, cuts]) => {
       const totalLength = parseFloat(width) * cuts;
       sumLengths += totalLength;
       return { width: parseFloat(width), cuts, totalLength };
@@ -496,11 +530,22 @@
     const mainBend = CONSTANTS.main_bend_mm || 0;
     const excessBend = CONSTANTS.excess_bend_mm || 0;
     const poles = mainData.poles;
+    const ecbClearance = lookupClearance(mainData.at);
+    const ecbLug = panelType === "ECB" && Number(mainData.at) >= 400 && ecbClearance
+      ? lookupLugDimensionsForAt(mainData.at, ecbClearance)
+      : null;
+    const ecbBusbarLength = ecbLug ? ecbLug.L * 1.5 * poles * 2 : 0;
+    if (ecbBusbarLength) {
+      sumLengths = ecbBusbarLength;
+      breakdown = [{ label: "ECB lug run", totalLength: ecbBusbarLength }];
+    }
     // Bends belong to the main feed connecting to the branch busbar, so
     // they only apply once there's actually a branch busbar to bend
     // toward. With no branches selected, there's nothing to bend to.
     const hasBranches = groups.length > 0;
-    const totalLength = sumLengths + (hasBranches ? poles * (mainBend + excessBend) : 0);
+    const totalLength = ecbBusbarLength
+      ? ecbBusbarLength
+      : sumLengths + (hasBranches ? poles * (mainBend + excessBend) : 0);
 
     const BAR_LENGTH = 6000;
     const pctOfBar = totalLength / BAR_LENGTH;
@@ -513,6 +558,7 @@
 
     return {
       poles, sumLengths, mainBend, excessBend, totalLength, breakdown, hasBranches,
+      ecbBusbarLength,
       pctOfBar, busbarPrice, busbarNeeded: busbar ? busbar.needed : null,
       cost, surcharge, exceedsTable: !busbar,
     };
@@ -609,6 +655,16 @@
     );
   }
 
+  function neutralBarRecommended() {
+    return (
+      supplyVoltage === 400 ||
+      activeBranches().some((sel) => {
+        const rowData = resolveRowData(sel);
+        return rowData && Number(rowData.poles) === 1;
+      })
+    );
+  }
+
   // ---- State ----
   let main = emptyRow();
   let branches = [emptyRow()];
@@ -616,7 +672,7 @@
   let mainLugMultiplier = 1;
   let panelType = "MDP";
   let supplyVoltage = 230;
-  let needsNeutralBar = true;
+  let needsNeutralBar = false;
   let profitMode = "percent"; // "percent" | "flat"
   let profitValue = 0;
   let discountMode = "percent"; // "percent" | "flat"
@@ -747,7 +803,12 @@
       type: "number",
       min: "1",
       value: sel.qty,
-      oninput: (e) => onChange({ ...sel, qty: Math.max(1, parseInt(e.target.value || "1", 10)) }),
+      // Do not rerender while the field is being edited; replacing the input
+      // on every keystroke causes focus and scroll position to jump.
+      onchange: (e) => {
+        const parsed = parseInt(e.target.value, 10);
+        onChange({ ...sel, qty: Number.isFinite(parsed) ? Math.max(1, parsed) : 1 });
+      },
     });
     const qtyTd = el("td", { "data-label": "Qty", class: "field" }, [qtyInput]);
 
@@ -789,7 +850,9 @@
     }
     const rows = data.breakdown.map((b) =>
       el("div", { class: "busbar-line" }, [
-        el("span", {}, [b.width + "mm \u00d7 " + b.cuts]),
+        el("span", {}, [
+          b.label ? b.label : b.width + "mm \u00d7 " + b.cuts,
+        ]),
         el("span", { class: "mono" }, [b.totalLength + "mm"]),
       ])
     );
@@ -799,16 +862,19 @@
         "div",
         { class: "busbar-lines" },
         data.hasBranches
-          ? rows.concat([
+          ? [
               el("div", { class: "busbar-line" }, [
                 el("span", {}, ["Main bend"]),
                 el("span", { class: "mono" }, [data.mainBend + "mm"]),
               ]),
-              el("div", { class: "busbar-line" }, [
-                el("span", {}, ["Excess bend"]),
-                el("span", { class: "mono" }, [data.excessBend + "mm"]),
-              ]),
-            ])
+            ]
+              .concat(rows)
+              .concat([
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Excess bend"]),
+                  el("span", { class: "mono" }, [data.excessBend + "mm"]),
+                ]),
+              ])
           : rows.concat([
               el("div", { class: "busbar-empty" }, ["No branches selected \u2014 bend allowance not applied."]),
             ])
@@ -1089,13 +1155,34 @@
       data.height !== null && data.width !== null
         ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm \u00d7 " + data.depth + "mm"
         : "no clearance data for this AT";
-
-    return el("div", { class: "card" }, [
-      el("div", { class: "busbar-block" }, [
-        el("div", { class: "busbar-block-title" }, ["Box dimensions"]),
-
-        el("div", { class: "busbar-subtitle" }, ["Height"]),
-        el("div", { class: "busbar-lines" }, [
+    const heightLines = data.isEcb
+      ? [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Top lug factor"]),
+            el("span", { class: "mono" }, [data.mainLugFactor !== null ? data.mainLugFactor.toFixed(1) + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Top clearance (AT " + main.at + ")"]),
+            el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main breaker height"]),
+            el("span", { class: "mono" }, [data.mainHeight + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Bottom lug factor"]),
+            el("span", { class: "mono" }, [data.mainLugFactor !== null ? data.mainLugFactor.toFixed(1) + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Bottom clearance (AT " + main.at + ")"]),
+            el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Height subtotal"]),
+            el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
+          ]),
+        ]
+      : [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main clearance (AT " + main.at + ")"]),
             el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
@@ -1117,7 +1204,13 @@
             el("span", { class: "mono" }, [data.gap + "mm"]),
           ]),
           el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Branch block (rows " + data.branchRows + " \u00d7 " + data.branchWidth + "mm, qty " + data.branchQty + ")"]),
+            el("span", {}, [
+              "Branch block (" +
+                data.branchBreakdown.map((b) => b.width + "mm \u00d7 " + b.rows).join(" + ") +
+                ", qty " +
+                data.branchQty +
+                ")",
+            ]),
             el("span", { class: "mono" }, [Math.round(data.branchBlockHeight) + "mm"]),
           ]),
           el("div", { class: "busbar-line" }, [
@@ -1132,65 +1225,58 @@
             el("span", {}, ["Height subtotal"]),
             el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
           ]),
-        ]),
+        ];
+
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Box dimensions"]),
+
+        el("div", { class: "busbar-subtitle" }, ["Height"]),
+        el("div", { class: "busbar-lines" }, heightLines),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
-        el(
-          "div",
-          { class: "busbar-lines" },
-          data.widthFixed
-            ? [
-                el("div", { class: "busbar-empty" }, [
-                  "All branches are MCB and the prefab assembly is used \u2014 width fixed at 400mm.",
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, ["Width subtotal"]),
-                  el("span", { class: "mono" }, [data.width + "mm"]),
-                ]),
-              ]
-            : [
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, ["Main width"]),
-                  el("span", { class: "mono" }, [data.mainWidth + "mm"]),
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, ["Branch height side A (AT " + (data.firstBranch ? data.firstBranch.rowData.at : "\u2014") + ")"]),
-                  el("span", { class: "mono" }, [data.heightSideA + "mm"]),
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, [
-                    "Branch height side B (" +
-                      (data.heightSideBEntry ? "AT " + data.heightSideBEntry.rowData.at : "no qty>1 branch") +
-                      ")",
-                  ]),
-                  el("span", { class: "mono" }, [data.heightSideB + "mm"]),
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, [
-                    "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
-                  ]),
-                  el("span", { class: "mono" }, [
-                    data.side1.lugFactor !== null
-                      ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
-                      : "\u2014",
-                  ]),
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, [
-                    "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
-                  ]),
-                  el("span", { class: "mono" }, [
-                    data.side2.lugFactor !== null
-                      ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
-                      : "\u2014",
-                  ]),
-                ]),
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, ["Width subtotal"]),
-                  el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
-                ]),
-              ]
-        ),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main width"]),
+            el("span", { class: "mono" }, [data.mainWidth + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch height side A (AT " + (data.firstBranch ? data.firstBranch.rowData.at : "\u2014") + ")"]),
+            el("span", { class: "mono" }, [data.heightSideA + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Branch height side B (" +
+                (data.heightSideBEntry ? "AT " + data.heightSideBEntry.rowData.at : "no qty>1 branch") +
+                ")",
+            ]),
+            el("span", { class: "mono" }, [data.heightSideB + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
+            ]),
+            el("span", { class: "mono" }, [
+              data.side1.lugFactor !== null
+                ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
+                : "\u2014",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
+            ]),
+            el("span", { class: "mono" }, [
+              data.side2.lugFactor !== null
+                ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
+                : "\u2014",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Width subtotal"]),
+            el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
+          ]),
+        ]),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Depth"]),
         el("div", { class: "busbar-lines" }, [
@@ -1247,7 +1333,7 @@
     }
 
     consider(main, "Main");
-    branches.forEach((sel, i) => consider(sel, "Branch " + (i + 1)));
+    activeBranches().forEach((sel, i) => consider(sel, "Branch " + (i + 1)));
 
     const eligible = assemblyEligible();
     const assembly = eligible && useAssembly ? computeAssembly() : null;
@@ -1308,7 +1394,11 @@
         el("div", { class: "eyebrow" }, [zapIcon(), "Estimator"]),
         el("h1", {}, ["Panel board builder"]),
       ]),
-      lineDiagramSvg(),
+      el("img", {
+        class: "builder-logo",
+        src: "icons/jn-controls-logo.png",
+        alt: "JN Controls Engineering Services",
+      }),
     ]);
     wrap.appendChild(header);
 
@@ -1320,6 +1410,7 @@
         class: "panel-info-select",
         onchange: (e) => {
           panelType = e.target.value;
+          if (panelType === "ECB") branches = [];
           render();
         },
       }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP"].map((opt) =>
@@ -1330,6 +1421,7 @@
           class: "panel-info-select",
           onchange: (e) => {
             supplyVoltage = parseInt(e.target.value, 10);
+            needsNeutralBar = neutralBarRecommended();
             render();
           },
         }, [230, 400].map((v) =>
@@ -1393,11 +1485,12 @@
     wrap.appendChild(mainSection);
 
     // Branch breakers section
-    const branchRows = branches.map((row, idx) =>
+    const branchRows = activeBranches().map((row, idx) =>
       renderBreakerRow(
         row,
         (next) => {
           branches = branches.map((r, i) => (i === idx ? next : r));
+          if (neutralBarRecommended()) needsNeutralBar = true;
           render();
         },
         {
@@ -1415,7 +1508,9 @@
       el("div", { class: "section-title-row" }, [
         el("h2", {}, ["Branch breakers"]),
         el("span", { class: "count" }, [
-          branches.length + " circuit" + (branches.length !== 1 ? "s" : ""),
+          (panelType === "ECB" ? 0 : branches.length) +
+            " circuit" +
+            ((panelType === "ECB" ? 0 : branches.length) !== 1 ? "s" : ""),
         ]),
       ]),
       el("p", { class: "sub" }, ["Every circuit fed from this panel."]),
@@ -1437,7 +1532,7 @@
           el(
             "tbody",
             {},
-            branches.length
+            panelType !== "ECB" && branches.length
               ? branchRows
               : [
                   el("tr", {}, [
@@ -1451,12 +1546,14 @@
             "button",
             {
               class: "add-btn",
+              disabled: panelType === "ECB" ? "disabled" : undefined,
               onclick: () => {
+                if (panelType === "ECB") return;
                 branches = [...branches, emptyRow()];
                 render();
               },
             },
-            [plusIcon(), "Add branch breaker"]
+            [plusIcon(), panelType === "ECB" ? "Branch breakers disabled for ECB" : "Add branch breaker"]
           ),
         ]),
       ]),
@@ -1548,7 +1645,7 @@
           el("span", {}, ["This panel needs a neutral bar"]),
         ]),
         el("span", { class: "assembly-toggle-hint" }, [
-          "for 1P branches",
+          "for 400V supply or 1P branches",
         ]),
       ]),
       el("div", { class: "busbar-grid" }, [
@@ -1846,12 +1943,13 @@
   window.loadBuilderConfig = function (config) {
     if (!config) return;
     main = { ...config.main };
-    branches = config.branches.map((b) => ({ ...b }));
+    panelType = config.panelType || "MDP";
+    branches = panelType === "ECB" ? [] : config.branches.map((b) => ({ ...b }));
     useAssembly = !!config.useAssembly;
     mainLugMultiplier = config.mainLugMultiplier || 1;
-    panelType = config.panelType || "MDP";
     supplyVoltage = config.supplyVoltage || 230;
-    needsNeutralBar = config.needsNeutralBar !== undefined ? config.needsNeutralBar : true;
+    needsNeutralBar =
+      config.needsNeutralBar !== undefined ? config.needsNeutralBar : neutralBarRecommended();
     profitMode = config.profitMode || "percent";
     profitValue = config.profitValue || 0;
     discountMode = config.discountMode || "percent";
