@@ -4,6 +4,32 @@
   let editingId = null;
   let printHeader = localStorage.getItem("po_print_header") || "";
   let printFooter = localStorage.getItem("po_print_footer") || "";
+  let logoDataUrl = localStorage.getItem("po_logo") || "";
+
+  // Downscales the chosen image before storing it (keeps localStorage
+  // small and print output crisp without a giant embedded file).
+  function loadLogoFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          const maxDim = 300;
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -148,7 +174,12 @@
     );
 
     return el("div", { class: "print-only po-print-sheet" }, [
-      printHeader ? el("div", { class: "po-print-header" }, [printHeader]) : null,
+      printHeader || logoDataUrl
+        ? el("div", { class: "po-print-top-row" }, [
+            printHeader ? el("div", { class: "po-print-header" }, [printHeader]) : el("div", {}, []),
+            logoDataUrl ? el("img", { class: "po-print-logo", src: logoDataUrl, alt: "Logo" }) : null,
+          ])
+        : null,
       el("h1", { class: "po-print-title" }, ["Purchase Order"]),
       el("table", { class: "po-print-table" }, [
         el("thead", {}, [
@@ -260,6 +291,37 @@
               localStorage.setItem("po_print_footer", printFooter);
             },
           }, [printFooter]),
+        ]),
+        el("label", { class: "po-print-field-label", style: "grid-column: 1 / -1;" }, [
+          "Logo (top right of the printed sheet)",
+          el("div", { class: "po-logo-row" }, [
+            logoDataUrl ? el("img", { class: "po-logo-preview", src: logoDataUrl, alt: "Logo preview" }) : null,
+            el("input", {
+              type: "file",
+              accept: "image/*",
+              onchange: async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                logoDataUrl = await loadLogoFile(file);
+                localStorage.setItem("po_logo", logoDataUrl);
+                render();
+              },
+            }),
+            logoDataUrl
+              ? el(
+                  "button",
+                  {
+                    class: "toolbar-btn po-delete-btn",
+                    onclick: () => {
+                      logoDataUrl = "";
+                      localStorage.removeItem("po_logo");
+                      render();
+                    },
+                  },
+                  ["Remove"]
+                )
+              : null,
+          ]),
         ]),
       ]),
       el(

@@ -230,7 +230,7 @@
   }
 
   function lookupLugDimensions(catNo) {
-    return LUG_DIMENSIONS.find((r) => r.cat_no === catNo) || null;
+    return MECH_LUGS.find((r) => r.cat_no === catNo) || null;
   }
 
   // Same-or-next-higher AT match against the ATS/MTS table, scoped to the
@@ -297,7 +297,7 @@
     // looked up from the lug table at all).
     const mainLugRow = clearanceRow && mainData.type !== "MCB" ? lookupLugDimensions(clearanceRow.mgl_cat_no) : null;
     const mainLugFactor =
-      mainData.type === "MCB" ? 0 : mainLugRow ? mainLugRow.H * 0.6 * (clearanceRow.parallel_count || 1) : null;
+      mainData.type === "MCB" ? 0 : mainLugRow ? mainLugRow.L * 0.6 * (clearanceRow.parallel_count || 1) : null;
     const mainHeight = mainData.height || 0;
 
     const branchEntries = branches
@@ -353,7 +353,7 @@
         return { at: entry.rowData.at, lugFactor: 0, sideClearance: cRow.bending_clearance_mm, exceeds: false };
       }
       const lRow = lookupLugDimensions(cRow.mgl_cat_no);
-      const lugFactor = lRow ? lRow.H * 0.6 * (cRow.parallel_count || 1) : null;
+      const lugFactor = lRow ? lRow.L * 0.6 * (cRow.parallel_count || 1) : null;
       return { at: entry.rowData.at, lugFactor, sideClearance: cRow.bending_clearance_mm, exceeds: !lRow };
     }
 
@@ -369,11 +369,19 @@
     const heightSideBEntry = sortedByAt.filter((x) => x !== firstBranch).find((x) => x.sel.qty > 1) || null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
-    const width = sidesResolved
+    let width = sidesResolved
       ? mainData.width + heightSideA + heightSideB +
         (side1.lugFactor + side1.sideClearance) +
         (side2.lugFactor + side2.sideClearance)
       : null;
+
+    // If every branch is MCB (main can be anything) and the prefab
+    // assembly is used instead of computed busbars, width is fixed at a
+    // standard 400mm rather than derived from lug/clearance data.
+    const allMCB = branchEntries.length > 0 && branchEntries.every((x) => x.rowData.type === "MCB");
+    if (allMCB && useAssembly) {
+      width = 400;
+    }
 
     // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
     const depth = mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
@@ -382,12 +390,12 @@
       mainClearance, mainLugFactor, mainHeight, gap, branchBlockHeight, branchRows, branchQty, branchWidth,
       heightSideA, heightSideB, heightSideBEntry,
       groundStand, backplateClearance, clearanceRow,
-      mainWidth: mainData.width, height, width, depth,
+      mainWidth: mainData.width, height, width, depth, widthFixed: allMCB && useAssembly,
       firstBranch, secondBranch, side1, side2,
       exceedsTable:
         !clearanceRow ||
         (mainData.type !== "MCB" && !mainLugRow) ||
-        (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+        (!(allMCB && useAssembly) && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -1127,48 +1135,62 @@
         ]),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
-        el("div", { class: "busbar-lines" }, [
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Main width"]),
-            el("span", { class: "mono" }, [data.mainWidth + "mm"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Branch height side A (AT " + (data.firstBranch ? data.firstBranch.rowData.at : "\u2014") + ")"]),
-            el("span", { class: "mono" }, [data.heightSideA + "mm"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, [
-              "Branch height side B (" +
-                (data.heightSideBEntry ? "AT " + data.heightSideBEntry.rowData.at : "no qty>1 branch") +
-                ")",
-            ]),
-            el("span", { class: "mono" }, [data.heightSideB + "mm"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, [
-              "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
-            ]),
-            el("span", { class: "mono" }, [
-              data.side1.lugFactor !== null
-                ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
-                : "\u2014",
-            ]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, [
-              "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
-            ]),
-            el("span", { class: "mono" }, [
-              data.side2.lugFactor !== null
-                ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
-                : "\u2014",
-            ]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Width subtotal"]),
-            el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
-          ]),
-        ]),
+        el(
+          "div",
+          { class: "busbar-lines" },
+          data.widthFixed
+            ? [
+                el("div", { class: "busbar-empty" }, [
+                  "All branches are MCB and the prefab assembly is used \u2014 width fixed at 400mm.",
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Width subtotal"]),
+                  el("span", { class: "mono" }, [data.width + "mm"]),
+                ]),
+              ]
+            : [
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Main width"]),
+                  el("span", { class: "mono" }, [data.mainWidth + "mm"]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Branch height side A (AT " + (data.firstBranch ? data.firstBranch.rowData.at : "\u2014") + ")"]),
+                  el("span", { class: "mono" }, [data.heightSideA + "mm"]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, [
+                    "Branch height side B (" +
+                      (data.heightSideBEntry ? "AT " + data.heightSideBEntry.rowData.at : "no qty>1 branch") +
+                      ")",
+                  ]),
+                  el("span", { class: "mono" }, [data.heightSideB + "mm"]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, [
+                    "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
+                  ]),
+                  el("span", { class: "mono" }, [
+                    data.side1.lugFactor !== null
+                      ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
+                      : "\u2014",
+                  ]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, [
+                    "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
+                  ]),
+                  el("span", { class: "mono" }, [
+                    data.side2.lugFactor !== null
+                      ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
+                      : "\u2014",
+                  ]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Width subtotal"]),
+                  el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
+                ]),
+              ]
+        ),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Depth"]),
         el("div", { class: "busbar-lines" }, [

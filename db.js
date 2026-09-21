@@ -7,7 +7,7 @@
 
   const TABLE_NAMES = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions", "ats_mts",
+    "clearance", "ats_mts",
   ];
 
   function hardcodedSeedFor(name) {
@@ -26,8 +26,6 @@
         return Object.entries(CONSTANTS).map(([name, value], i) => ({ id: i + 1, name, value }));
       case "clearance":
         return SEED_CLEARANCE.map((r, i) => ({ id: i + 1, ...r }));
-      case "lug_dimensions":
-        return SEED_LUG_DIMENSIONS.map((r, i) => ({ id: i + 1, ...r }));
       case "ats_mts":
         return SEED_ATS_MTS.map((r, i) => ({ id: i + 1, ...r }));
       default:
@@ -119,7 +117,6 @@
     replaceArrayContents(ASSEMBLIES["3P"], DB.assemblies_3p.map(stripId));
     replaceArrayContents(MECH_LUGS, DB.mech_lugs.map(stripId));
     replaceArrayContents(CLEARANCE, DB.clearance.map(stripId));
-    replaceArrayContents(LUG_DIMENSIONS, DB.lug_dimensions.map(stripId));
     replaceArrayContents(ATS_MTS, DB.ats_mts.map(stripId));
     Object.keys(CONSTANTS).forEach((k) => delete CONSTANTS[k]);
     DB.constants.forEach((c) => { CONSTANTS[c.name] = c.value; });
@@ -157,6 +154,29 @@
     return changed;
   }
 
+  // Adds the merged lug-dimension columns (cat_no, L, W, G, H, F, etc.) to
+  // any mech_lugs row saved before the two tables were combined, matching
+  // by ampere_trip against the current hardcoded defaults.
+  function healMechLugs(rows) {
+    const defaultsByAt = {};
+    SEED_MECH_LUGS.forEach((r) => { defaultsByAt[r.ampere_trip] = r; });
+    let changed = false;
+    rows.forEach((row) => {
+      if (row.cat_no === undefined) {
+        const def = defaultsByAt[row.ampere_trip];
+        if (def) {
+          Object.assign(row, {
+            cat_no: def.cat_no, wire_range: def.wire_range, bolt_size_in: def.bolt_size_in,
+            metric_bolt_mm: def.metric_bolt_mm, L: def.L, W: def.W, G: def.G, H: def.H, F: def.F,
+            std_pkg: def.std_pkg,
+          });
+          changed = true;
+        }
+      }
+    });
+    return changed;
+  }
+
   const DBReady = (async () => {
     idbHandle = await openIDB();
     for (const name of TABLE_NAMES) {
@@ -166,12 +186,16 @@
         await idbPut(idbHandle, SEEDS_STORE, name, seed);
       } else if (name === "constants" && healConstants(seed)) {
         await idbPut(idbHandle, SEEDS_STORE, name, seed);
+      } else if (name === "mech_lugs" && healMechLugs(seed)) {
+        await idbPut(idbHandle, SEEDS_STORE, name, seed);
       }
       let live = await idbGet(idbHandle, TABLES_STORE, name);
       if (!live) {
         live = seed.map((r) => ({ ...r }));
         await idbPut(idbHandle, TABLES_STORE, name, live);
       } else if (name === "constants" && healConstants(live)) {
+        await idbPut(idbHandle, TABLES_STORE, name, live);
+      } else if (name === "mech_lugs" && healMechLugs(live)) {
         await idbPut(idbHandle, TABLES_STORE, name, live);
       }
       DB[name] = live;

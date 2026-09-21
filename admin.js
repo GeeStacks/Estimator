@@ -20,13 +20,26 @@
     mech_lugs: {
       label: "Mech lugs",
       fields: [
-        { key: "item_no", label: "Item #", type: "number" },
         { key: "ampere_trip", label: "Ampere trip", type: "number" },
         { key: "mech_lugs_size", label: "Size", type: "text" },
         { key: "sets", label: "Sets", type: "number" },
         { key: "price", label: "Price", type: "number" },
+        { key: "cat_no", label: "Cat. no.", type: "text" },
+        { key: "wire_range", label: "Wire range", type: "text" },
+        { key: "bolt_size_in", label: "Bolt size", type: "text" },
+        { key: "metric_bolt_mm", label: "Metric bolt (mm)", type: "number" },
+        { key: "L", label: "L (mm)", type: "number" },
+        { key: "W", label: "W (mm)", type: "number" },
+        { key: "G", label: "G (mm)", type: "number" },
+        { key: "H", label: "H (mm)", type: "number" },
+        { key: "F", label: "F (mm)", type: "number" },
+        { key: "std_pkg", label: "Std. pkg", type: "number" },
       ],
-      blank: { item_no: 0, ampere_trip: 0, mech_lugs_size: "", sets: 1, price: 0 },
+      blank: {
+        ampere_trip: 0, mech_lugs_size: "", sets: 1, price: 0,
+        cat_no: "", wire_range: "", bolt_size_in: "", metric_bolt_mm: 0,
+        L: 0, W: 0, G: 0, H: 0, F: 0, std_pkg: 0,
+      },
     },
     busbars: {
       label: "Busbars",
@@ -80,22 +93,6 @@
       ],
       blank: { at: 0, wire_size: "", lug_size_label: "", bending_clearance_mm: 0, parallel_count: 1, mgl_cat_no: "" },
     },
-    lug_dimensions: {
-      label: "Lug dimensions",
-      fields: [
-        { key: "cat_no", label: "Cat. no.", type: "text" },
-        { key: "wire_range", label: "Wire range", type: "text" },
-        { key: "bolt_size_in", label: "Bolt size", type: "text" },
-        { key: "metric_bolt_mm", label: "Metric bolt (mm)", type: "number" },
-        { key: "L", label: "L (mm)", type: "number" },
-        { key: "W", label: "W (mm)", type: "number" },
-        { key: "G", label: "G (mm)", type: "number" },
-        { key: "H", label: "H (mm)", type: "number" },
-        { key: "F", label: "F (mm)", type: "number" },
-        { key: "std_pkg", label: "Std. pkg", type: "number" },
-      ],
-      blank: { cat_no: "", wire_range: "", bolt_size_in: "", metric_bolt_mm: 0, L: 0, W: 0, G: 0, H: 0, F: 0, std_pkg: 0 },
-    },
     ats_mts: {
       label: "ATS/MTS",
       fields: [
@@ -121,7 +118,7 @@
 
   const TABLE_ORDER = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions", "ats_mts",
+    "clearance", "ats_mts",
   ];
 
   let activeTable = "breakers";
