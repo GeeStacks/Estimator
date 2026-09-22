@@ -1,4 +1,4 @@
-const CACHE_NAME = "panel-board-builder-v9";
+const CACHE_NAME = "panel-board-builder-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -16,7 +16,9 @@ const APP_SHELL = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/jn-controls-logo.png",
-  "./icons/app-logo.png"
+  "./icons/app-logo.png",
+  "./icons/jn-pwa-icon-192.png",
+  "./icons/jn-pwa-icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {

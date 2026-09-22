@@ -10,20 +10,20 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "icons/app-logo.png",
-      "sizes": "150x150",
+      "src": "icons/jn-pwa-icon-192.png",
+      "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/app-logo.png",
-      "sizes": "150x150",
+      "src": "icons/jn-pwa-icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/app-logo.png",
-      "sizes": "150x150",
+      "src": "icons/jn-pwa-icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
