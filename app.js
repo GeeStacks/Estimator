@@ -1388,17 +1388,24 @@
     app.innerHTML = "";
     const wrap = el("div", { class: "wrap" }, []);
 
+    function brandLogo(className) {
+      return el("div", { class: className + " brand-logo", role: "img", "aria-label": "JN Controls Engineering Services" }, [
+        el("span", { class: "brand-logo-mark" }, ["JN"]),
+        el("span", { class: "brand-logo-name" }, [
+          el("span", {}, ["CONTROLS"]),
+          el("span", {}, ["ENGINEERING"]),
+          el("span", {}, ["SERVICES"]),
+        ]),
+      ]);
+    }
+
     // Header
     const header = el("div", { class: "header" }, [
       el("div", {}, [
         el("div", { class: "eyebrow" }, [zapIcon(), "Estimator"]),
         el("h1", {}, ["Panel board builder"]),
       ]),
-      el("img", {
-        class: "builder-logo",
-        src: "icons/jn-controls-logo.png",
-        alt: "JN Controls Engineering Services",
-      }),
+      brandLogo("builder-logo"),
     ]);
     wrap.appendChild(header);
 

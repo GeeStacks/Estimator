@@ -211,14 +211,21 @@
       ])
     );
 
+    function brandLogo(className) {
+      return el("div", { class: className + " brand-logo", role: "img", "aria-label": printHeader.companyName }, [
+        el("span", { class: "brand-logo-mark" }, ["JN"]),
+        el("span", { class: "brand-logo-name" }, [
+          el("span", {}, ["CONTROLS"]),
+          el("span", {}, ["ENGINEERING"]),
+          el("span", {}, ["SERVICES"]),
+        ]),
+      ]);
+    }
+
     function renderLetterhead() {
       return el("div", { class: "po-letterhead" }, [
         el("div", { class: "po-letterhead-brand" }, [
-          el("img", {
-            class: "po-letterhead-logo",
-            src: "icons/jn-controls-logo.png",
-            alt: printHeader.companyName,
-          }),
+          brandLogo("po-letterhead-logo"),
         ]),
         el("div", { class: "po-letterhead-contact" }, [
           el("div", {}, [printHeader.address]),
@@ -384,11 +391,14 @@
       ]),
       el("div", { class: "po-form-paper" }, [
         el("div", { class: "po-form-letterhead" }, [
-          el("img", {
-            class: "po-form-logo",
-            src: "icons/jn-controls-logo.png",
-            alt: printHeader.companyName,
-          }),
+          el("div", { class: "po-form-logo brand-logo", role: "img", "aria-label": printHeader.companyName }, [
+            el("span", { class: "brand-logo-mark" }, ["JN"]),
+            el("span", { class: "brand-logo-name" }, [
+              el("span", {}, ["CONTROLS"]),
+              el("span", {}, ["ENGINEERING"]),
+              el("span", {}, ["SERVICES"]),
+            ]),
+          ]),
           el("div", { class: "po-form-contact" }, [
             el("strong", {}, [printHeader.companyName]),
             el("div", {}, [printHeader.address]),

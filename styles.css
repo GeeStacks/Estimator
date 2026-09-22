@@ -66,12 +66,43 @@ select:focus, input:focus, button:focus-visible {
   margin: 6px 0 0;
 }
 .header svg { flex-shrink: 0; }
-.builder-logo {
-  width: 132px;
-  height: 46px;
-  object-fit: cover;
-  object-position: center;
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #111;
   background: #fff;
+  line-height: 1;
+}
+.brand-logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  background: #111;
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  padding-right: 1px;
+}
+.brand-logo-name {
+  display: flex;
+  flex-direction: column;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+.builder-logo {
+  width: 180px;
+  min-height: 46px;
+  padding: 2px;
 }
 
 /* Panel info bar */
@@ -623,10 +654,9 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   border-bottom: 1px solid #000;
 }
 .po-form-logo {
-  width: 180px;
-  height: 58px;
-  object-fit: cover;
-  object-position: center;
+  width: 220px;
+  min-height: 46px;
+  padding: 2px;
 }
 .po-form-contact {
   text-align: right;
@@ -662,6 +692,8 @@ table.admin-table td.actions { text-align: center; width: 36px; }
 }
 @media (max-width: 720px) {
   .po-print-fields, .po-letterhead-editor { grid-template-columns: 1fr; }
+  .builder-logo { width: 150px; max-width: 42vw; }
+  .po-form-logo { width: 170px; max-width: 48vw; }
 }
 
 /* Print-only sheet: hidden on screen, shown (and everything else hidden)
@@ -820,11 +852,9 @@ table.po-table td, table.po-table th { vertical-align: top; }
   max-width: 55%;
 }
 .po-letterhead-logo {
-  display: block;
-  width: 180px;
-  height: 58px;
-  object-fit: cover;
-  object-position: center;
+  width: 220px;
+  min-height: 46px;
+  padding: 2px;
 }
 .po-letterhead-contact {
   text-align: right;
@@ -1022,5 +1052,35 @@ table.po-print-table pre {
     width: 100%;
   }
   .no-print { display: none !important; }
+  .po-print-sheet,
+  .po-print-sheet * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .po-letterhead {
+    min-height: 64px;
+    align-items: flex-start;
+  }
+  .po-letterhead-brand {
+    flex: 0 0 250px;
+    max-width: 250px;
+  }
+  .po-letterhead-logo {
+    width: 250px;
+    min-height: 52px;
+    padding: 0;
+  }
+  .po-letterhead-logo .brand-logo-mark {
+    width: 52px;
+    height: 52px;
+    font-size: 23px;
+  }
+  .po-letterhead-logo .brand-logo-name {
+    font-size: 15px;
+    letter-spacing: 0.09em;
+  }
+  .po-letterhead-contact {
+    flex: 1 1 auto;
+  }
   @page { margin: 12mm; }
 }
