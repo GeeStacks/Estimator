@@ -856,32 +856,47 @@
         el("span", { class: "mono" }, [b.totalLength + "mm"]),
       ])
     );
+    // Only the bend allowance is per-pole; the cut-length subtotal below is
+    // not multiplied by pole count. These are surfaced as separate
+    // subtotals so the "\u00d7 N poles" step doesn't read as applying to
+    // everything above it.
+    const bendPerPole = data.mainBend + data.excessBend;
+    const bendTotal = data.poles * bendPerPole;
     return el("div", { class: "busbar-block" }, [
       el("div", { class: "busbar-block-title" }, ["Main busbar (vertical bend)"]),
       el(
         "div",
         { class: "busbar-lines" },
         data.hasBranches
-          ? [
+          ? rows.concat([
+              el("div", { class: "busbar-subtotal" }, [
+                el("span", {}, ["Cut length subtotal"]),
+                el("span", { class: "mono" }, [Math.round(data.sumLengths) + "mm"]),
+              ]),
               el("div", { class: "busbar-line" }, [
                 el("span", {}, ["Main bend"]),
                 el("span", { class: "mono" }, [data.mainBend + "mm"]),
               ]),
-            ]
-              .concat(rows)
-              .concat([
-                el("div", { class: "busbar-line" }, [
-                  el("span", {}, ["Excess bend"]),
-                  el("span", { class: "mono" }, [data.excessBend + "mm"]),
-                ]),
-              ])
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Excess bend"]),
+                el("span", { class: "mono" }, [data.excessBend + "mm"]),
+              ]),
+              el("div", { class: "busbar-subtotal" }, [
+                el("span", {}, ["Bend allowance (per pole)"]),
+                el("span", { class: "mono" }, [bendPerPole + "mm"]),
+              ]),
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["\u00d7 " + data.poles + " poles"]),
+                el("span", { class: "mono" }, [Math.round(bendTotal) + "mm"]),
+              ]),
+            ])
           : rows.concat([
               el("div", { class: "busbar-empty" }, ["No branches selected \u2014 bend allowance not applied."]),
             ])
       ),
       el("div", { class: "busbar-total" }, [
-        el("span", {}, ["\u00d7 " + data.poles + " poles"]),
-        el("span", { class: "mono" }, [Math.round(data.totalLength) + "mm total"]),
+        el("span", {}, ["Total length"]),
+        el("span", { class: "mono" }, [Math.round(data.totalLength) + "mm"]),
       ]),
       el("div", { class: "busbar-total" }, [
         el("span", {}, ["Main busbar cost"]),

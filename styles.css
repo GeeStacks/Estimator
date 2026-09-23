@@ -311,6 +311,15 @@ table.breaker-table td.num { text-align: right; }
 }
 .busbar-line .mono { font-family: var(--font-data); color: var(--ink); }
 .busbar-empty { font-size: 13px; color: var(--faint); }
+.busbar-subtotal {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 500;
+  padding-top: 4px;
+  border-top: 1px dotted var(--line);
+}
+.busbar-subtotal .mono { font-family: var(--font-data); color: var(--ink); }
 .busbar-total {
   display: flex;
   justify-content: space-between;
