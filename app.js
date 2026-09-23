@@ -1,5 +1,6 @@
 (function () {
   const FIELD_ORDER = ["brand", "at", "poles", "model"];
+  const BUSBAR_SAFETY_FACTOR = 1.2;
 
   // ---- Busbar helpers ----
   function sortedBusbarsForType(type) {
@@ -510,14 +511,22 @@
     if (!mainData) return null;
     const groups = branchGroups();
 
-    // bucket busbar cuts by width
-    const widthBuckets = {};
+    // bucket busbar cuts by width. Raw quantities are combined into their
+    // width bucket FIRST, then paired once per bucket — otherwise breakers
+    // that are the same physical width but fall into different groups
+    // (different AT, model, etc.) each get rounded up to a pair separately,
+    // overcounting cuts instead of pairing across the combined quantity.
+    const widthRawQty = {};
     groups.forEach((g) => {
       const w = g.rowData.width;
       if (w === null || w === undefined) return;
+      widthRawQty[w] = (widthRawQty[w] || 0) + g.rawQty;
+    });
+    const widthBuckets = {};
+    Object.entries(widthRawQty).forEach(([w, rawQty]) => {
       // Main busbar cuts represent breaker positions: each pair shares one
-      // position, independent of the breaker's pole count.
-      widthBuckets[w] = (widthBuckets[w] || 0) + Math.ceil(g.rawQty / 2);
+      // position, independent of the breaker's pole count or rating.
+      widthBuckets[w] = Math.ceil(rawQty / 2);
     });
 
     let sumLengths = 0;
@@ -1355,6 +1364,7 @@
       if (branchBusbar) busbarTotal += branchBusbar.cost;
       if (mainBusbar && mainBusbar.cost !== null) busbarTotal += mainBusbar.cost;
     }
+    busbarTotal *= BUSBAR_SAFETY_FACTOR;
     cost += busbarTotal;
 
     const mainMechLugs = computeMainMechLugs(mainLugMultiplier);
@@ -1744,7 +1754,9 @@
           type: "number",
           class: "receipt-adjust-input",
           value: String(value),
-          oninput: (e) => onValueChange(parseFloat(e.target.value) || 0),
+          // Do not rerender while the field is being edited; replacing the input
+          // on every keystroke causes focus and scroll position to jump.
+          onchange: (e) => onValueChange(parseFloat(e.target.value) || 0),
         }),
         el("span", { class: "receipt-adjust-amount" }, [amountLabel]),
       ]);
@@ -1789,7 +1801,7 @@
       ),
 
       el("div", { class: "receipt-line" }, [
-        el("span", {}, ["Busbar"]),
+        el("span", {}, ["Busbar (+20%)"]),
         el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.busbarTotal)]),
       ]),
       surchargeActive

@@ -357,6 +357,12 @@ table.breaker-table td.num { text-align: right; }
 }
 .nav-tab.active { color: #fff; border-bottom-color: var(--accent); }
 .nav-tab:hover { color: #fff; }
+.app-version {
+  margin-left: auto;
+  align-self: center;
+  color: #9AA0A6;
+  font: 12px var(--font-data);
+}
 
 /* Admin page */
 .global-toolbar {
