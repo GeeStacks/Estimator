@@ -543,9 +543,11 @@
     // they only apply once there's actually a branch busbar to bend
     // toward. With no branches selected, there's nothing to bend to.
     const hasBranches = groups.length > 0;
-    const totalLength = ecbBusbarLength
-      ? ecbBusbarLength
-      : sumLengths + (hasBranches ? poles * (mainBend + excessBend) : 0);
+    // Cut lengths + both bend allowances are summed FIRST, then that
+    // combined length is multiplied by pole count (each pole needs its
+    // own full run).
+    const preMultiply = sumLengths + (hasBranches ? mainBend + excessBend : 0);
+    const totalLength = ecbBusbarLength ? ecbBusbarLength : preMultiply * poles;
 
     const BAR_LENGTH = 6000;
     const pctOfBar = totalLength / BAR_LENGTH;
@@ -557,7 +559,7 @@
     if (cost !== null && surcharge) cost *= 1.3;
 
     return {
-      poles, sumLengths, mainBend, excessBend, totalLength, breakdown, hasBranches,
+      poles, sumLengths, mainBend, excessBend, preMultiply, totalLength, breakdown, hasBranches,
       ecbBusbarLength,
       pctOfBar, busbarPrice, busbarNeeded: busbar ? busbar.needed : null,
       cost, surcharge, exceedsTable: !busbar,
@@ -856,47 +858,36 @@
         el("span", { class: "mono" }, [b.totalLength + "mm"]),
       ])
     );
-    // Only the bend allowance is per-pole; the cut-length subtotal below is
-    // not multiplied by pole count. These are surfaced as separate
-    // subtotals so the "\u00d7 N poles" step doesn't read as applying to
-    // everything above it.
-    const bendPerPole = data.mainBend + data.excessBend;
-    const bendTotal = data.poles * bendPerPole;
     return el("div", { class: "busbar-block" }, [
       el("div", { class: "busbar-block-title" }, ["Main busbar (vertical bend)"]),
       el(
         "div",
         { class: "busbar-lines" },
         data.hasBranches
-          ? rows.concat([
-              el("div", { class: "busbar-subtotal" }, [
-                el("span", {}, ["Cut length subtotal"]),
-                el("span", { class: "mono" }, [Math.round(data.sumLengths) + "mm"]),
-              ]),
+          ? [
               el("div", { class: "busbar-line" }, [
                 el("span", {}, ["Main bend"]),
                 el("span", { class: "mono" }, [data.mainBend + "mm"]),
               ]),
-              el("div", { class: "busbar-line" }, [
-                el("span", {}, ["Excess bend"]),
-                el("span", { class: "mono" }, [data.excessBend + "mm"]),
-              ]),
-              el("div", { class: "busbar-subtotal" }, [
-                el("span", {}, ["Bend allowance (per pole)"]),
-                el("span", { class: "mono" }, [bendPerPole + "mm"]),
-              ]),
-              el("div", { class: "busbar-line" }, [
-                el("span", {}, ["\u00d7 " + data.poles + " poles"]),
-                el("span", { class: "mono" }, [Math.round(bendTotal) + "mm"]),
-              ]),
-            ])
+            ]
+              .concat(rows)
+              .concat([
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Excess bend"]),
+                  el("span", { class: "mono" }, [data.excessBend + "mm"]),
+                ]),
+                el("div", { class: "busbar-subtotal" }, [
+                  el("span", {}, ["Subtotal"]),
+                  el("span", { class: "mono" }, [Math.round(data.preMultiply) + "mm"]),
+                ]),
+              ])
           : rows.concat([
               el("div", { class: "busbar-empty" }, ["No branches selected \u2014 bend allowance not applied."]),
             ])
       ),
       el("div", { class: "busbar-total" }, [
-        el("span", {}, ["Total length"]),
-        el("span", { class: "mono" }, [Math.round(data.totalLength) + "mm"]),
+        el("span", {}, ["\u00d7 " + data.poles + " poles"]),
+        el("span", { class: "mono" }, [Math.round(data.totalLength) + "mm total"]),
       ]),
       el("div", { class: "busbar-total" }, [
         el("span", {}, ["Main busbar cost"]),
