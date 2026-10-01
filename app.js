@@ -394,11 +394,17 @@
         : null;
 
     // ---- First/Second branch: which branches set each side's lug
-    // factor + clearance. Sorted by AT descending; First = highest AT.
-    // Second = next-highest AT, UNLESS that one is a lone breaker (qty 1
-    // and no other branch selection shares its brand+model) — then skip
-    // down to the next branch with qty != 1. If nothing qualifies, reuse
-    // First branch's own values for the second side too.
+    // factor + clearance (and, for width, each side's physical breaker
+    // height). Sorted by AT descending; First = highest AT.
+    // If First's own model has 2+ units, it fills BOTH flanks of its own
+    // row by itself — Second = First, same model on both sides, since
+    // pairing only ever happens within one model and a lower-AT model
+    // shouldn't be pulled in while the top model still has a free unit.
+    // Otherwise, Second = next-highest AT, UNLESS that one is a lone
+    // breaker (qty 1 and no other branch selection shares its
+    // brand+model) — then skip down to the next branch with qty != 1.
+    // If nothing qualifies, reuse First branch's own values for the
+    // second side too.
     const sortedByAt = [...branchEntries].sort((a, b) => Number(b.rowData.at) - Number(a.rowData.at));
     const firstBranch = sortedByAt[0] || null;
 
@@ -408,15 +414,20 @@
       );
     }
 
-    let secondBranch = sortedByAt[1] || null;
-    if (secondBranch) {
-      const isLoneUnit = secondBranch.sel.qty === 1 && !modelSharedElsewhere(secondBranch);
-      if (isLoneUnit) {
-        const replacement = sortedByAt.slice(2).find((x) => x.sel.qty !== 1);
-        secondBranch = replacement || firstBranch; // no qualifying branch: reuse First branch's values
-      }
+    let secondBranch = null;
+    if (firstBranch && firstBranch.sel.qty >= 2) {
+      secondBranch = firstBranch;
     } else {
-      secondBranch = firstBranch; // only one branch selected total
+      secondBranch = sortedByAt[1] || null;
+      if (secondBranch) {
+        const isLoneUnit = secondBranch.sel.qty === 1 && !modelSharedElsewhere(secondBranch);
+        if (isLoneUnit) {
+          const replacement = sortedByAt.slice(2).find((x) => x.sel.qty !== 1);
+          secondBranch = replacement || firstBranch; // no qualifying branch: reuse First branch's values
+        }
+      } else {
+        secondBranch = firstBranch; // only one branch selected total
+      }
     }
 
     function sideFactorsFor(entry) {
@@ -439,11 +450,14 @@
     const sidesResolved = side1.lugFactor !== null && side2.lugFactor !== null;
 
     // Branch height side A: the highest-AT branch's own height.
-    // Branch height side B: the next-highest-AT branch (excluding side A)
-    // whose own quantity is more than 1. If every other branch is a
-    // lone unit (qty 1), side B height is 0.
+    // Branch height side B: Second branch's own height, but only if it
+    // actually represents a second physical breaker occupying that flank
+    // (qty > 1 — whether that's First itself filling both sides, or a
+    // different, lower-AT model doing so). The lone-unit fallback case
+    // above has no second breaker on that flank, so height stays 0 even
+    // though its lug/clearance is still reserved there.
     const heightSideA = firstBranch ? firstBranch.rowData.height || 0 : 0;
-    const heightSideBEntry = sortedByAt.filter((x) => x !== firstBranch).find((x) => x.sel.qty > 1) || null;
+    const heightSideBEntry = secondBranch && secondBranch.sel.qty > 1 ? secondBranch : null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
     const width = sidesResolved
