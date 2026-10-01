@@ -284,6 +284,7 @@ table.breaker-table td.num { text-align: right; }
   cursor: pointer;
 }
 .assembly-toggle-label input[type="checkbox"] { width: 16px; height: 16px; }
+.assembly-toggle-label input[type="radio"] { width: 16px; height: 16px; }
 .assembly-toggle-label input:disabled + span { color: var(--faint); }
 .assembly-toggle-hint { font-size: 12px; color: var(--faint); }
 .assembly-card { }
@@ -360,6 +361,8 @@ table.breaker-table td.num { text-align: right; }
 .app-version {
   margin-left: auto;
   align-self: center;
+  flex-shrink: 0;
+  white-space: nowrap;
   color: #9AA0A6;
   font: 12px var(--font-data);
 }

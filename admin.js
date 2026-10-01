@@ -95,6 +95,14 @@
       ],
       blank: { cat_no: "", relative_mmsq_size: "", wire_range: "", bolt_size_in: "", metric_bolt_mm: 0, L: 0, W: 0, G: 0, H: 0, F: 0, std_pkg: 0 },
     },
+    grounding_busbars: {
+      label: "Grounding busbars",
+      fields: [
+        { key: "branches", label: "Branches", type: "number" },
+        { key: "cost", label: "Cost", type: "number" },
+      ],
+      blank: { branches: 0, cost: 0 },
+    },
     ats_mts: {
       label: "ATS/MTS",
       fields: [
@@ -120,7 +128,7 @@
 
   const TABLE_ORDER = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions", "ats_mts",
+    "clearance", "lug_dimensions", "ats_mts", "grounding_busbars",
   ];
 
   let activeTable = "breakers";

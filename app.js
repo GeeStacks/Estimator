@@ -167,12 +167,37 @@
     return { cost, missing, breakdown };
   }
 
+  // Total quantity of active (non-spare, resolved) branch breakers. Used as
+  // the lookup key for the "in stock" grounding busbar table.
+  function totalActiveBranchQty() {
+    return activeBranches().reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
+  }
+
+  // Same-or-next-higher bracket by branch count (brackets are discrete:
+  // 10, 12, 14... 32), same round-up convention as the other lookup tables.
+  function lookupGroundingBusbarByBranches(branchCount) {
+    const sorted = [...GROUNDING_BUSBARS].sort((a, b) => Number(a.branches) - Number(b.branches));
+    const idx = sorted.findIndex((r) => Number(branchCount) <= Number(r.branches));
+    return idx === -1 ? null : sorted[idx];
+  }
+
   // Ground busbar: same-or-next-higher bracket as the main breaker's own
   // busbar, then one size down from that, priced at a flat standard length
   // rather than measured cuts.
   function computeGroundBusbar() {
     const mainData = resolveRowData(main);
     if (!mainData) return null;
+
+    if (busbarSourceMode === "inStock") {
+      const branchCount = totalActiveBranchQty();
+      const row = lookupGroundingBusbarByBranches(branchCount);
+      return {
+        source: "inStock",
+        branchCount,
+        cost: row ? row.cost : null,
+        exceedsTable: !row,
+      };
+    }
 
     const groundBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
     const standardLength = CONSTANTS.ground_bus_length_mm || 0;
@@ -182,6 +207,7 @@
     const cost = busbarPrice !== null ? pctOfBar * busbarPrice : null;
 
     return {
+      source: "custom",
       standardLength, pctOfBar, busbarPrice,
       busbarNeeded: groundBusbar ? groundBusbar.needed : null,
       exceedsTable: !groundBusbar,
@@ -202,13 +228,26 @@
   // busbar, then one size down from that (same rule as ground). Disabled
   // entirely by the "needs neutral bar" toggle for 3-phase-only panels.
   function computeNeutralBusbar(enabled) {
-    const standardLength = CONSTANTS.neutral_bus_length_mm || 0;
     if (!enabled) {
-      return { enabled: false, standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: 0 };
+      return { enabled: false, source: busbarSourceMode, cost: 0 };
     }
+
+    if (busbarSourceMode === "inStock") {
+      const branchCount = totalActiveBranchQty();
+      const row = lookupGroundingBusbarByBranches(branchCount);
+      return {
+        enabled: true,
+        source: "inStock",
+        branchCount,
+        cost: row ? row.cost : null,
+        exceedsTable: !row,
+      };
+    }
+
+    const standardLength = CONSTANTS.neutral_bus_length_mm || 0;
     const mainData = resolveRowData(main);
     if (!mainData) {
-      return { enabled: true, standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: null };
+      return { enabled: true, source: "custom", standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: null };
     }
     const neutralBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
     const BAR_LENGTH = 6000;
@@ -216,7 +255,7 @@
     const busbarPrice = neutralBusbar ? neutralBusbar.price : null;
     const cost = busbarPrice !== null ? pctOfBar * busbarPrice : null;
     return {
-      enabled: true, standardLength, pctOfBar, busbarPrice,
+      enabled: true, source: "custom", standardLength, pctOfBar, busbarPrice,
       busbarNeeded: neutralBusbar ? neutralBusbar.needed : null,
       exceedsTable: !neutralBusbar,
       cost,
@@ -438,17 +477,24 @@
     return Math.ceil(rawQty / 2) * poles;
   }
 
-  // Group identical branch selections (brand+model+at+poles) — spares
-  // included, since a spare position still occupies busbar space —
-  // and compute total busbar cuts per group.
+  // Group identical branch selections by breaker + pole (brand+model+poles)
+  // — spares included, since a spare position still occupies busbar space.
+  // AT is deliberately NOT part of the key: pairing is about the physical
+  // breaker footprint, which is the same across AT ratings for a given
+  // model, so a 40AT and a 32AT unit of the same model still share a cut.
+  // The group keeps the highest AT seen for busbar sizing, since a shared
+  // cut needs to be rated for the larger of the two.
   function branchGroups() {
     const groups = {};
     activeBranches().forEach((sel) => {
       const rowData = resolveRowData(sel);
       if (!rowData) return;
-      const key = [sel.brand, sel.model, sel.at, sel.poles].join("|");
+      const key = [sel.brand, sel.model, sel.poles].join("|");
       if (!groups[key]) groups[key] = { rowData, rawQty: 0 };
       groups[key].rawQty += sel.qty;
+      if (Number(rowData.at) > Number(groups[key].rowData.at)) {
+        groups[key].rowData = rowData;
+      }
     });
     return Object.values(groups).map((g) => ({
       rowData: g.rowData,
@@ -684,6 +730,7 @@
   let panelType = "MDP";
   let supplyVoltage = 230;
   let needsNeutralBar = false;
+  let busbarSourceMode = "custom"; // "custom" (size/AT-based) | "inStock" (branch-count based)
   let profitMode = "percent"; // "percent" | "flat"
   let profitValue = 0;
   let discountMode = "percent"; // "percent" | "flat"
@@ -1054,10 +1101,14 @@
         ]),
       ]);
     }
-    return el("div", { class: "card" }, [
-      el("div", { class: "busbar-block" }, [
-        el("div", { class: "busbar-block-title" }, ["Ground busbar"]),
-        el("div", { class: "busbar-lines" }, [
+    const lines = data.source === "inStock"
+      ? [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch count"]),
+            el("span", { class: "mono" }, [String(data.branchCount)]),
+          ]),
+        ]
+      : [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Standard length"]),
             el("span", { class: "mono" }, [data.standardLength + "mm"]),
@@ -1066,15 +1117,27 @@
             el("span", {}, ["Busbar used"]),
             el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
           ]),
-        ]),
+        ];
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Ground busbar"]),
+        el("div", { class: "busbar-lines" }, lines),
         el("div", { class: "busbar-total" }, [
           el("span", {}, ["Ground busbar cost"]),
           el("span", { class: "mono" }, [
-            data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
+            data.cost !== null
+              ? "\u20B1" + formatMoney(data.cost)
+              : data.source === "inStock"
+                ? "no rate for this branch count"
+                : "no rate for this AT",
           ]),
         ]),
         data.exceedsTable
-          ? el("div", { class: "warn" }, ["Main breaker's AT exceeds the busbar table \u2014 needs a manual quote."])
+          ? el("div", { class: "warn" }, [
+              data.source === "inStock"
+                ? "Branch count exceeds the grounding busbars table \u2014 needs a manual quote."
+                : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
+            ])
           : null,
       ]),
     ]);
@@ -1088,10 +1151,14 @@
         ]),
       ]);
     }
-    return el("div", { class: "card" }, [
-      el("div", { class: "busbar-block" }, [
-        el("div", { class: "busbar-block-title" }, ["Neutral busbar"]),
-        el("div", { class: "busbar-lines" }, [
+    const lines = data.source === "inStock"
+      ? [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Branch count"]),
+            el("span", { class: "mono" }, [String(data.branchCount)]),
+          ]),
+        ]
+      : [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Standard length"]),
             el("span", { class: "mono" }, [data.standardLength + "mm"]),
@@ -1100,15 +1167,27 @@
             el("span", {}, ["Busbar used"]),
             el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
           ]),
-        ]),
+        ];
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Neutral busbar"]),
+        el("div", { class: "busbar-lines" }, lines),
         el("div", { class: "busbar-total" }, [
           el("span", {}, ["Neutral busbar cost"]),
           el("span", { class: "mono" }, [
-            data.cost !== null ? "\u20B1" + formatMoney(data.cost) : "no rate for this AT",
+            data.cost !== null
+              ? "\u20B1" + formatMoney(data.cost)
+              : data.source === "inStock"
+                ? "no rate for this branch count"
+                : "no rate for this AT",
           ]),
         ]),
         data.exceedsTable
-          ? el("div", { class: "warn" }, ["Main breaker's AT exceeds the busbar table \u2014 needs a manual quote."])
+          ? el("div", { class: "warn" }, [
+              data.source === "inStock"
+                ? "Branch count exceeds the grounding busbars table \u2014 needs a manual quote."
+                : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
+            ])
           : null,
       ]),
     ]);
@@ -1658,6 +1737,35 @@
       el("div", { class: "assembly-toggle" }, [
         el("label", { class: "assembly-toggle-label" }, [
           el("input", {
+            type: "radio",
+            name: "busbar-source-mode",
+            checked: busbarSourceMode === "inStock" ? "checked" : undefined,
+            onchange: () => {
+              busbarSourceMode = "inStock";
+              render();
+            },
+          }),
+          el("span", {}, ["In stock (by branch count)"]),
+        ]),
+        el("label", { class: "assembly-toggle-label" }, [
+          el("input", {
+            type: "radio",
+            name: "busbar-source-mode",
+            checked: busbarSourceMode === "custom" ? "checked" : undefined,
+            onchange: () => {
+              busbarSourceMode = "custom";
+              render();
+            },
+          }),
+          el("span", {}, ["Custom busbar (by AT)"]),
+        ]),
+      ]),
+      el("p", { class: "sub" }, [
+        "Applies to both ground and neutral busbars. The box's neutral insulator/ground-stand allowance always applies regardless of this setting.",
+      ]),
+      el("div", { class: "assembly-toggle" }, [
+        el("label", { class: "assembly-toggle-label" }, [
+          el("input", {
             type: "checkbox",
             checked: needsNeutralBar ? "checked" : undefined,
             onchange: (e) => {
@@ -1956,7 +2064,7 @@
     return {
       main: { ...main },
       branches: branches.map((b) => ({ ...b })),
-      useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar,
+      useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar, busbarSourceMode,
       profitMode, profitValue, discountMode, discountValue,
       mountingType, nemaRating, giGauge, boxPrice,
       mainResolved, branchesResolved,
@@ -1975,6 +2083,7 @@
     supplyVoltage = config.supplyVoltage || 230;
     needsNeutralBar =
       config.needsNeutralBar !== undefined ? config.needsNeutralBar : neutralBarRecommended();
+    busbarSourceMode = config.busbarSourceMode || "custom";
     profitMode = config.profitMode || "percent";
     profitValue = config.profitValue || 0;
     discountMode = config.discountMode || "percent";

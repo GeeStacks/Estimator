@@ -3,11 +3,17 @@
   let quotations = [];
   let editingId = null;
   let showPreview = false;
-  const defaultPrintHeader = {
+  // Fixed company letterhead shown on the actual printed/exported PO sheet.
+  // Not exposed as an editable field on screen (only project-specific
+  // details below are editable) — but the printout still carries it.
+  const LETTERHEAD = {
     companyName: "CONTROLS ENGINEERING SERVICES",
     address: "Fuentes St., Iloilo City",
     phone: "Phone: 09094125826/09770182397",
     email: "Email: jncontrolsengineeringservices@gmail.com",
+  };
+
+  const defaultPrintHeader = {
     subject: "SUPPLY OF PANEL BOARDS",
     attention: "PROCUREMENT",
     company: "",
@@ -22,7 +28,6 @@
     printHeader = { ...defaultPrintHeader };
   }
   const defaultPrintFooter = {
-    validityDate: "August 11, 2026",
     deliveryAddress: "Iloilo City and Bacolod City",
     leadTime: "20–30 days upon receipt of the 50% down payment.",
     paymentTerms: "50% down payment upon confirmation of order. The remaining 50% balance is due prior to delivery.",
@@ -73,6 +78,15 @@
 
   function formatMoney(n) {
     return Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+
+  // Quotation validity date = the header date + 30 days. Falls back to
+  // today if the header date field can't be parsed as a date.
+  function addDays(dateStr, days) {
+    let d = new Date(dateStr);
+    if (isNaN(d.getTime())) d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   }
 
   // Builds the multi-line item description from a builder config snapshot
@@ -186,6 +200,7 @@
   // inputs/buttons, plus the header/footer. Kept in sync on every render()
   // and shown only by the @media print rules in styles.css.
   function renderPrintSheet(grandTotal, livePreview) {
+    const validityDate = addDays(printHeader.date, 30);
     const rows = quotations.map((q, i) =>
       el("tr", {}, [
         el("td", { class: "po-item-no" }, [String(i + 1)]),
@@ -212,7 +227,7 @@
     );
 
     function brandLogo(className) {
-      return el("div", { class: className + " brand-logo", role: "img", "aria-label": printHeader.companyName }, [
+      return el("div", { class: className + " brand-logo", role: "img", "aria-label": LETTERHEAD.companyName }, [
         el("span", { class: "brand-logo-mark" }, ["JN"]),
         el("span", { class: "brand-logo-name" }, [
           el("span", {}, ["CONTROLS"]),
@@ -228,9 +243,9 @@
           brandLogo("po-letterhead-logo"),
         ]),
         el("div", { class: "po-letterhead-contact" }, [
-          el("div", {}, [printHeader.address]),
-          el("div", {}, [printHeader.phone]),
-          el("div", {}, [printHeader.email]),
+          el("div", {}, [LETTERHEAD.address]),
+          el("div", {}, [LETTERHEAD.phone]),
+          el("div", {}, [LETTERHEAD.email]),
         ]),
       ]);
     }
@@ -275,7 +290,7 @@
       ]),
       el("div", { class: "po-notes" }, [
         el("div", { class: "po-notes-title" }, ["NOTES:"]),
-        el("div", {}, ["THIS OFFER IS GOOD UNTIL " + printFooter.validityDate.toUpperCase() + "."]),
+        el("div", {}, ["THIS OFFER IS GOOD UNTIL " + validityDate.toUpperCase() + "."]),
         el("div", {}, ["DELIVERY IS INCLUDED WITHIN " + printFooter.deliveryAddress.toUpperCase() + "."]),
       ]),
       el("h2", { class: "po-footer-section-title" }, ["PAYMENT DETAILS"]),
@@ -390,29 +405,9 @@
         "Edit the letterhead and project details below, then use your browser's print dialog and choose \u201cSave as PDF.\u201d",
       ]),
       el("div", { class: "po-form-paper" }, [
-        el("div", { class: "po-form-letterhead" }, [
-          el("div", { class: "po-form-logo brand-logo", role: "img", "aria-label": printHeader.companyName }, [
-            el("span", { class: "brand-logo-mark" }, ["JN"]),
-            el("span", { class: "brand-logo-name" }, [
-              el("span", {}, ["CONTROLS"]),
-              el("span", {}, ["ENGINEERING"]),
-              el("span", {}, ["SERVICES"]),
-            ]),
-          ]),
-          el("div", { class: "po-form-contact" }, [
-            el("strong", {}, [printHeader.companyName]),
-            el("div", {}, [printHeader.address]),
-            el("div", {}, [printHeader.phone]),
-            el("div", {}, [printHeader.email]),
-          ]),
-        ]),
         el("div", { class: "po-form-section-title" }, ["PROJECT INFORMATION"]),
       el("div", { class: "po-letterhead-editor" }, [
         ...[
-          ["companyName", "Company name"],
-          ["address", "Address"],
-          ["phone", "Phone"],
-          ["email", "Email"],
           ["subject", "Subject"],
           ["attention", "Attention"],
           ["company", "Company name on document"],
@@ -432,23 +427,11 @@
           }),
         ])),
       ]),
-      el("div", { class: "po-form-section-title" }, ["TERMS AND PAYMENT"]),
+      el("div", { class: "po-form-section-title" }, ["SIGNATORIES"]),
       el("div", { class: "po-letterhead-editor" }, [
         ...[
-          ["validityDate", "Quotation validity date"],
-          ["deliveryAddress", "Delivery address"],
-          ["leadTime", "Lead time"],
-          ["paymentTerms", "Payment terms"],
-          ["warranty", "Warranty"],
-          ["paymentMethod", "Payment method"],
-          ["bank", "Bank"],
-          ["accountName", "Account name"],
-          ["accountNumber", "Account number"],
           ["preparedBy", "Prepared by"],
-          ["preparedTitle", "Prepared-by title"],
-          ["preparedCompany", "Prepared-by company"],
           ["approvedBy", "Approved by"],
-          ["approvedTitle", "Approved-by title"],
         ].map(([key, label]) => el("label", { class: "po-print-field-label" }, [
           label,
           el("input", {
