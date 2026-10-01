@@ -628,12 +628,18 @@
     const poles = mainData.poles;
     const HORIZONTAL_LENGTH = branchHorizontalLength(poles);
 
-    // bucket busbar cuts by (type, at)
+    // bucket busbar cuts by (type, at) — this is about which physical bar
+    // stock gets bought/cut, which multiple breaker models can share.
+    // Track the contributing model name(s) per bucket purely for display,
+    // since AT alone can be misleading when a bucket merges a mixed-AT
+    // group (shared cut sized off the group's highest AT).
     const buckets = {};
     groups.forEach((g) => {
       const key = g.rowData.type + "|" + g.rowData.at;
-      if (!buckets[key]) buckets[key] = { type: g.rowData.type, at: g.rowData.at, cuts: 0 };
+      if (!buckets[key]) buckets[key] = { type: g.rowData.type, at: g.rowData.at, cuts: 0, models: [] };
       buckets[key].cuts += g.cuts;
+      const modelLabel = g.rowData.model || g.rowData.brand + " " + g.rowData.model;
+      if (!buckets[key].models.includes(modelLabel)) buckets[key].models.push(modelLabel);
     });
 
     const rows = Object.values(buckets).map((b) => {
@@ -642,6 +648,7 @@
       return {
         type: b.type,
         at: b.at,
+        models: b.models,
         cuts: b.cuts,
         totalLength,
         busbarPrice: busbar ? busbar.price : null,
@@ -966,7 +973,7 @@
     }
     const rows = data.rows.map((r) =>
       el("div", { class: "busbar-line" }, [
-        el("span", {}, [r.type + " " + r.at + "A \u00d7 " + r.cuts]),
+        el("span", {}, [r.models.join(" / ") + " \u00d7 " + r.cuts]),
         el("span", { class: "mono" }, [
           r.finalPrice !== null ? formatMoney(r.finalPrice) : "no rate",
         ]),
