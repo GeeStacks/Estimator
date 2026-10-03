@@ -484,6 +484,109 @@
     };
   }
 
+  // Steel sheet allocation (DXF): the box is fabricated from 6 fully
+  // separate flat panels — front, back, top, bottom, left, right — each
+  // cut individually rather than folded from one development. Front/back
+  // share one size (W x H), top/bottom share one size (W x D), and
+  // left/right share one size (D x H), so there are 3 distinct flat
+  // pattern sizes, each needed in quantity 2 per box. Every panel gets a
+  // 15mm flange allowance on all 4 edges (30mm added to each flat
+  // dimension) before nesting onto 2440x1220 sheets.
+  //
+  // Different panel types ARE nested together on the same sheet — e.g.
+  // leftover width next to a tall Front/Back panel can still hold a
+  // Top/Bottom or Left/Right panel — using a shelf first-fit-decreasing-
+  // height packer: panels are sorted tallest-first, each one dropped into
+  // the first existing shelf (row) it fits in width-and-height-wise
+  // across any sheet opened so far, a new shelf started on a sheet with
+  // enough remaining vertical room, or a new sheet opened as a last
+  // resort. This is a standard, fast approximation for 2D nesting —
+  // not a perfect/optimal cut — but tracks real material use far better
+  // than dedicating a whole sheet to each panel type.
+  const STEEL_SHEET_W = 2440;
+  const STEEL_SHEET_H = 1220;
+  const STEEL_FLANGE_MM = 15;
+
+  function packSheets(pieces, sheetW, sheetH) {
+    if (pieces.length === 0) return 0;
+    const sorted = [...pieces].sort((a, b) => b.h - a.h);
+    const sheets = []; // each: { usedHeight, shelves: [{ height, usedWidth }] }
+
+    function place(piece) {
+      for (const sheet of sheets) {
+        for (const shelf of sheet.shelves) {
+          if (piece.h <= shelf.height && sheetW - shelf.usedWidth >= piece.w) {
+            shelf.usedWidth += piece.w;
+            return true;
+          }
+        }
+        if (sheet.usedHeight + piece.h <= sheetH) {
+          sheet.shelves.push({ height: piece.h, usedWidth: piece.w });
+          sheet.usedHeight += piece.h;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    sorted.forEach((piece) => {
+      if (!place(piece)) {
+        sheets.push({ usedHeight: piece.h, shelves: [{ height: piece.h, usedWidth: piece.w }] });
+      }
+    });
+
+    return sheets.length;
+  }
+
+  function computeSteelSheetAllocation(boxData) {
+    if (!boxData || boxData.width === null || boxData.height === null || boxData.depth === null) return null;
+
+    const W = boxData.width;
+    const H = boxData.height;
+    const D = boxData.depth;
+
+    const panelTypes = [
+      { label: "Front / Back", panelW: W, panelH: H, qty: 2 },
+      { label: "Top / Bottom", panelW: W, panelH: D, qty: 2 },
+      { label: "Left / Right", panelW: D, panelH: H, qty: 2 },
+    ];
+
+    const pieces = [];
+    const rows = panelTypes.map((p) => {
+      const flatW = p.panelW + STEEL_FLANGE_MM * 2;
+      const flatH = p.panelH + STEEL_FLANGE_MM * 2;
+      const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
+      const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
+      const exceedsSheet = !fitsNormal && !fitsRotated;
+      if (!exceedsSheet) {
+        // Orient with the smaller side as height — packs tighter into
+        // shelves than leaving every panel in its "natural" orientation.
+        const w = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatW : flatH;
+        const h = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatH : flatW;
+        for (let i = 0; i < p.qty; i++) pieces.push({ w, h });
+      }
+      return {
+        label: p.label,
+        flatW: Math.round(flatW),
+        flatH: Math.round(flatH),
+        qty: p.qty,
+        exceedsSheet,
+      };
+    });
+
+    const exceedsAny = rows.some((r) => r.exceedsSheet);
+    const totalSheets = packSheets(pieces, STEEL_SHEET_W, STEEL_SHEET_H);
+
+    return {
+      rows,
+      totalSheets,
+      exceedsAny,
+      sheetW: STEEL_SHEET_W,
+      sheetH: STEEL_SHEET_H,
+      flange: STEEL_FLANGE_MM,
+    };
+  }
+
   // Busbar cuts needed for a group of N identical breakers, each with
   // `poles` phases. Pairing shares one cut per phase between 2 breakers;
   // an odd one out still needs its own cut per phase.
@@ -1409,6 +1512,50 @@
     ]);
   }
 
+  function renderSteelSheetBlock(data) {
+    if (!data) {
+      return el("div", { class: "card" }, [
+        el("div", { class: "busbar-block" }, [
+          el("div", { class: "busbar-block-title" }, ["Steel sheet allocation (DXF)"]),
+          el("div", { class: "busbar-empty" }, ["Select a main breaker to calculate."]),
+        ]),
+      ]);
+    }
+
+    const rowLines = data.rows.map((r) =>
+      el("div", { class: "busbar-line" }, [
+        el("span", {}, [r.label + " (" + r.flatW + "mm \u00d7 " + r.flatH + "mm, qty " + r.qty + ")"]),
+        el("span", { class: "mono" }, [r.exceedsSheet ? "doesn't fit on sheet" : "fits \u2014 counted in total"]),
+      ])
+    );
+
+    return el("div", { class: "card" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Steel sheet allocation (DXF)"]),
+        el("div", { class: "busbar-lines" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Sheet size"]),
+            el("span", { class: "mono" }, [data.sheetW + "mm \u00d7 " + data.sheetH + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Flange allowance (per edge)"]),
+            el("span", { class: "mono" }, [data.flange + "mm"]),
+          ]),
+          ...rowLines,
+        ]),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Total sheets (all panels nested together)"]),
+          el("span", { class: "mono" }, [String(data.totalSheets)]),
+        ]),
+        data.exceedsAny
+          ? el("div", { class: "warn" }, [
+              "One or more panels exceed the " + data.sheetW + "\u00d7" + data.sheetH + " sheet \u2014 needs a manual cutting plan.",
+            ])
+          : null,
+      ]),
+    ]);
+  }
+
   function trashIcon() {
     const span = el("span", { html: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path></svg>' }, []);
     return span;
@@ -1487,6 +1634,7 @@
     if (neutralBusbar.cost !== null) cost += neutralBusbar.cost;
 
     const boxDimensions = computeBoxDimensions();
+    const steelSheets = computeSteelSheetAllocation(boxDimensions);
 
     const atsMts = computeAtsMtsCost();
     if (atsMts && atsMts.cost) cost += atsMts.cost;
@@ -1495,7 +1643,7 @@
 
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
-      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions, atsMts,
+      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions, steelSheets, atsMts,
       boxPrice,
     };
   }
@@ -1828,6 +1976,7 @@
       totals.boxDimensions && totals.boxDimensions.exceedsTable
         ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
         : null,
+      el("div", { style: "margin-top:14px;" }, [renderSteelSheetBlock(totals.steelSheets)]),
       el("div", { class: "po-save-row", style: "margin-top:14px;" }, [
         el("label", { class: "receipt-adjust-label", style: "flex:0 0 auto;" }, ["Box price"]),
         el("input", {
