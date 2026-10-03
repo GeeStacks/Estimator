@@ -144,6 +144,7 @@
       if (sel.spare) return;
       const rowData = resolveRowData(sel);
       if (!rowData) return;
+      if (rowData.type === "MCB") return; // MCBs don't use mech/ground lugs
       const groundLug = lookupGroundLug(rowData.at);
       if (!groundLug) {
         missing += sel.qty;
