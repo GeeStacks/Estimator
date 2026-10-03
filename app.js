@@ -368,8 +368,12 @@
     const branchQty = activeBranches().reduce((sum, sel) => sum + (resolveRowData(sel) ? sel.qty : 0), 0);
     const branchWidth = branchEntries.length ? Math.max(...branchEntries.map((x) => x.rowData.width || 0)) : 0;
 
-    const gap = CONSTANTS.box_main_branch_gap_mm || 0;
-    const groundStand = CONSTANTS.box_insulator_ground_stand_mm || 0;
+    // "Use assembly instead of busbars" (all-MCB panel) uses fixed
+    // clearance figures instead of the constants table, since the
+    // breakers sit in a pre-built assembly rather than on individually
+    // sized busbars.
+    const gap = useAssembly ? 70 : CONSTANTS.box_main_branch_gap_mm || 0;
+    const groundStand = useAssembly ? 40 : CONSTANTS.box_insulator_ground_stand_mm || 0;
     const backplateClearance = CONSTANTS.box_backplate_clearance_mm || 0;
 
     // Pairing applies within each identical breaker group; different models
@@ -460,11 +464,13 @@
     const heightSideBEntry = secondBranch && secondBranch.sel.qty > 1 ? secondBranch : null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
-    const width = sidesResolved
-      ? mainData.width + heightSideA + heightSideB +
-        (side1.lugFactor + side1.sideClearance) +
-        (side2.lugFactor + side2.sideClearance)
-      : null;
+    const width = useAssembly
+      ? 400
+      : sidesResolved
+        ? mainData.width + heightSideA + heightSideB +
+          (side1.lugFactor + side1.sideClearance) +
+          (side2.lugFactor + side2.sideClearance)
+        : null;
 
     // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
     const depth = mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
@@ -480,22 +486,24 @@
       exceedsTable:
         !clearanceRow ||
         (mainData.type !== "MCB" && !mainLugRow) ||
-        (branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+        (!useAssembly && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
-  // Steel sheet allocation (DXF): the box is fabricated from 6 fully
-  // separate flat panels — front, back, top, bottom, left, right — each
-  // cut individually rather than folded from one development. Front/back
-  // share one size (W x H), top/bottom share one size (W x D), and
-  // left/right share one size (D x H), so there are 3 distinct flat
-  // pattern sizes, each needed in quantity 2 per box. Every panel gets a
-  // 15mm flange allowance on all 4 edges (30mm added to each flat
-  // dimension) before nesting onto 2440x1220 sheets.
+  // Steel sheet allocation (DXF): the box is fabricated from 4 flat
+  // pieces per box:
+  //  - Enclosure base: back + left + right sides, bent from one flat
+  //    sheet (qty 1), flat pattern (depth + width + depth) x height.
+  //  - Top / Bottom: 2 separate flat panels, width x depth each.
+  //  - Door / Cover: 2 separate flat panels, depth x height each.
+  //  - Back plate: 1 flat panel, sized 3/4 of the (unused-elsewhere)
+  //    front panel size.
+  // Every panel gets a 15mm flange allowance on all 4 edges (30mm added
+  // to each flat dimension) before nesting onto 2440x1220 sheets.
   //
   // Different panel types ARE nested together on the same sheet — e.g.
-  // leftover width next to a tall Front/Back panel can still hold a
-  // Top/Bottom or Left/Right panel — using a shelf first-fit-decreasing-
+  // leftover width next to a tall Enclosure base panel can still hold a
+  // Top/Bottom or Door/Cover panel — using a shelf first-fit-decreasing-
   // height packer: panels are sorted tallest-first, each one dropped into
   // the first existing shelf (row) it fits in width-and-height-wise
   // across any sheet opened so far, a new shelf started on a sheet with
@@ -545,16 +553,29 @@
     const H = boxData.height;
     const D = boxData.depth;
 
+    // Enclosure base: back + left + right sides, bent from one flat
+    // sheet into a U-shaped shell rather than cut as 3 separate panels —
+    // so its flat pattern unfolds to (left depth + back width + right
+    // depth) wide by the box height tall, as a single piece (qty 1).
+    // Front isn't part of this piece; it's only used below as a sizing
+    // reference for the back plate.
+    const frontFlatW = W + STEEL_FLANGE_MM * 2;
+    const frontFlatH = H + STEEL_FLANGE_MM * 2;
+
     const panelTypes = [
-      { label: "Front / Back", panelW: W, panelH: H, qty: 2 },
-      { label: "Top / Bottom", panelW: W, panelH: D, qty: 2 },
-      { label: "Left / Right", panelW: D, panelH: H, qty: 2 },
+      { label: "Enclosure base", flatW: (W + 2 * D) + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 1 },
+      { label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 },
+      { label: "Door / Cover", flatW: D + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 2 },
+      // Back plate (mounting plate inside the enclosure): sized 3/4 of
+      // the front panel, one per box.
+      { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 },
     ];
 
+    const sheetArea = STEEL_SHEET_W * STEEL_SHEET_H;
     const pieces = [];
     const rows = panelTypes.map((p) => {
-      const flatW = p.panelW + STEEL_FLANGE_MM * 2;
-      const flatH = p.panelH + STEEL_FLANGE_MM * 2;
+      const flatW = p.flatW;
+      const flatH = p.flatH;
       const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
       const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
       const exceedsSheet = !fitsNormal && !fitsRotated;
@@ -571,6 +592,10 @@
         flatH: Math.round(flatH),
         qty: p.qty,
         exceedsSheet,
+        // Share of one sheet's area this panel type's total pieces take
+        // up — a quick per-type material-use indicator, separate from
+        // the actual combined nested sheet count below.
+        areaPct: (flatW * flatH * p.qty * 100) / sheetArea,
       };
     });
 
@@ -1525,7 +1550,7 @@
     const rowLines = data.rows.map((r) =>
       el("div", { class: "busbar-line" }, [
         el("span", {}, [r.label + " (" + r.flatW + "mm \u00d7 " + r.flatH + "mm, qty " + r.qty + ")"]),
-        el("span", { class: "mono" }, [r.exceedsSheet ? "doesn't fit on sheet" : "fits \u2014 counted in total"]),
+        el("span", { class: "mono" }, [r.exceedsSheet ? "doesn't fit on sheet" : r.areaPct.toFixed(1) + "% of sheet"]),
       ])
     );
 
