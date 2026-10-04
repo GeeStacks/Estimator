@@ -406,32 +406,33 @@
     // pairing only ever happens within one model and a lower-AT model
     // shouldn't be pulled in while the top model still has a free unit.
     // Otherwise, Second = next-highest AT, UNLESS that one is a lone
-    // breaker (qty 1 and no other branch selection shares its
-    // brand+model) — then skip down to the next branch with qty != 1.
+    // single unit — then skip down to the next model with 2+ units.
     // If nothing qualifies, reuse First branch's own values for the
     // second side too.
-    const sortedByAt = [...branchEntries].sort((a, b) => Number(b.rowData.at) - Number(a.rowData.at));
-    const firstBranch = sortedByAt[0] || null;
-
-    function modelSharedElsewhere(entry) {
-      return branchEntries.some(
-        (x) => x !== entry && x.rowData.brand === entry.rowData.brand && x.rowData.model === entry.rowData.model
-      );
-    }
+    //
+    // This operates on groupedBranches (branchGroups()'s output), not
+    // raw branchEntries/selection rows directly: groupedBranches already
+    // sums quantity correctly across every selection row of the same
+    // brand+model+poles, whereas a selection row's own qty only reflects
+    // that one row — e.g. the same breaker added as 10 separate rows of
+    // qty 1 each is 10 total units, but each row's own qty is 1.
+    // Re-deriving that aggregation here (instead of reusing
+    // groupedBranches) previously caused exactly that under-count.
+    const sortedGroupsByAt = [...groupedBranches].sort((a, b) => Number(b.rowData.at) - Number(a.rowData.at));
+    const firstBranch = sortedGroupsByAt[0] || null;
 
     let secondBranch = null;
-    if (firstBranch && firstBranch.sel.qty >= 2) {
+    if (firstBranch && firstBranch.rawQty >= 2) {
       secondBranch = firstBranch;
     } else {
-      secondBranch = sortedByAt[1] || null;
+      secondBranch = sortedGroupsByAt[1] || null;
       if (secondBranch) {
-        const isLoneUnit = secondBranch.sel.qty === 1 && !modelSharedElsewhere(secondBranch);
-        if (isLoneUnit) {
-          const replacement = sortedByAt.slice(2).find((x) => x.sel.qty !== 1);
+        if (secondBranch.rawQty === 1) {
+          const replacement = sortedGroupsByAt.slice(2).find((g) => g.rawQty !== 1);
           secondBranch = replacement || firstBranch; // no qualifying branch: reuse First branch's values
         }
       } else {
-        secondBranch = firstBranch; // only one branch selected total
+        secondBranch = firstBranch; // only one branch model selected total
       }
     }
 
@@ -462,7 +463,7 @@
     // above has no second breaker on that flank, so height stays 0 even
     // though its lug/clearance is still reserved there.
     const heightSideA = firstBranch ? firstBranch.rowData.height || 0 : 0;
-    const heightSideBEntry = secondBranch && secondBranch.sel.qty > 1 ? secondBranch : null;
+    const heightSideBEntry = secondBranch && secondBranch.rawQty > 1 ? secondBranch : null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
     const width = useAssembly
