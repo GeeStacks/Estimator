@@ -495,13 +495,18 @@
   // Steel sheet allocation (DXF): the box is fabricated from 4 flat
   // pieces per box:
   //  - Enclosure base: back + left + right sides, bent from one flat
-  //    sheet (qty 1), flat pattern (depth + width + depth) x height.
+  //    sheet (qty 1), flat pattern (depth + width + depth) x height —
+  //    UNLESS that combined flat pattern doesn't fit a sheet in either
+  //    orientation, in which case back/left/right fall back to 3
+  //    separate flat panels instead (back: width x height, left/right:
+  //    depth x height each).
   //  - Top / Bottom: 2 separate flat panels, width x depth each.
-  //  - Door / Cover: 2 separate flat panels, depth x height each.
-  //  - Back plate: 1 flat panel, sized 3/4 of the (unused-elsewhere)
-  //    front panel size.
+  //  - Door / Cover: 2 separate flat panels, width x height each (the
+  //    same footprint as the front face).
+  //  - Back plate: 1 flat panel, sized 3/4 of the front panel size.
   // Every panel gets a 15mm flange allowance on all 4 edges (30mm added
-  // to each flat dimension) before nesting onto 2440x1220 sheets.
+  // to each flat dimension) before nesting onto 2440x1220 sheets, with a
+  // 5mm cutting allowance kept between every pair of nested pieces.
   //
   // Different panel types ARE nested together on the same sheet — e.g.
   // leftover width next to a tall Enclosure base panel can still hold a
@@ -516,23 +521,35 @@
   const STEEL_SHEET_W = 2440;
   const STEEL_SHEET_H = 1220;
   const STEEL_FLANGE_MM = 15;
+  const STEEL_KERF_MM = 5; // gap kept between adjacent nested pieces
 
-  function packSheets(pieces, sheetW, sheetH) {
-    if (pieces.length === 0) return 0;
+  // Returns { sheetCount, placements }. placements is one entry per piece:
+  // { sheet, x, y, w, h, label } — sheet is a 0-based sheet index, x/y is
+  // the piece's top-left corner within that sheet. Used both for the
+  // sheet-count total and to actually draw the layout. `kerf` is the gap
+  // reserved after each piece (to its right, and below its shelf row) so
+  // nested pieces never sit flush against their neighbor.
+  function packSheets(pieces, sheetW, sheetH, kerf) {
+    if (pieces.length === 0) return { sheetCount: 0, placements: [] };
     const sorted = [...pieces].sort((a, b) => b.h - a.h);
-    const sheets = []; // each: { usedHeight, shelves: [{ height, usedWidth }] }
+    const sheets = []; // each: { usedHeight, shelves: [{ height, usedWidth, y }] }
+    const placements = [];
 
     function place(piece) {
-      for (const sheet of sheets) {
+      for (let si = 0; si < sheets.length; si++) {
+        const sheet = sheets[si];
         for (const shelf of sheet.shelves) {
           if (piece.h <= shelf.height && sheetW - shelf.usedWidth >= piece.w) {
-            shelf.usedWidth += piece.w;
+            placements.push({ sheet: si, x: shelf.usedWidth, y: shelf.y, w: piece.w, h: piece.h, label: piece.label });
+            shelf.usedWidth += piece.w + kerf; // leave a kerf gap before the next piece in this shelf
             return true;
           }
         }
         if (sheet.usedHeight + piece.h <= sheetH) {
-          sheet.shelves.push({ height: piece.h, usedWidth: piece.w });
-          sheet.usedHeight += piece.h;
+          const y = sheet.usedHeight;
+          sheet.shelves.push({ height: piece.h, usedWidth: piece.w + kerf, y });
+          placements.push({ sheet: si, x: 0, y, w: piece.w, h: piece.h, label: piece.label });
+          sheet.usedHeight = y + piece.h + kerf; // leave a kerf gap before the next shelf
           return true;
         }
       }
@@ -541,11 +558,12 @@
 
     sorted.forEach((piece) => {
       if (!place(piece)) {
-        sheets.push({ usedHeight: piece.h, shelves: [{ height: piece.h, usedWidth: piece.w }] });
+        sheets.push({ usedHeight: piece.h + kerf, shelves: [{ height: piece.h, usedWidth: piece.w + kerf, y: 0 }] });
+        placements.push({ sheet: sheets.length - 1, x: 0, y: 0, w: piece.w, h: piece.h, label: piece.label });
       }
     });
 
-    return sheets.length;
+    return { sheetCount: sheets.length, placements };
   }
 
   function computeSteelSheetAllocation(boxData) {
@@ -555,23 +573,45 @@
     const H = boxData.height;
     const D = boxData.depth;
 
+    // Front/back/door footprint: box width x box height, plus flange.
+    const frontFlatW = W + STEEL_FLANGE_MM * 2;
+    const frontFlatH = H + STEEL_FLANGE_MM * 2;
+    // Left/right side footprint: box depth x box height, plus flange.
+    const sideFlatW = D + STEEL_FLANGE_MM * 2;
+    const sideFlatH = H + STEEL_FLANGE_MM * 2;
+
+    function fitsSheetEitherWay(flatW, flatH) {
+      const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
+      const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
+      return fitsNormal || fitsRotated;
+    }
+
     // Enclosure base: back + left + right sides, bent from one flat
     // sheet into a U-shaped shell rather than cut as 3 separate panels —
     // so its flat pattern unfolds to (left depth + back width + right
     // depth) wide by the box height tall, as a single piece (qty 1).
-    // Front isn't part of this piece; it's only used below as a sizing
-    // reference for the back plate.
-    const frontFlatW = W + STEEL_FLANGE_MM * 2;
-    const frontFlatH = H + STEEL_FLANGE_MM * 2;
+    // If that combined flat pattern doesn't fit a sheet in either
+    // orientation, fall back to 3 separate flat panels — back, left,
+    // right — each handled on its own instead.
+    const enclosureFlatW = (W + 2 * D) + STEEL_FLANGE_MM * 2;
+    const enclosureFlatH = H + STEEL_FLANGE_MM * 2;
+    const enclosureFits = fitsSheetEitherWay(enclosureFlatW, enclosureFlatH);
 
-    const panelTypes = [
-      { label: "Enclosure base", flatW: (W + 2 * D) + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 1 },
-      { label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 },
-      { label: "Door / Cover", flatW: D + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 2 },
-      // Back plate (mounting plate inside the enclosure): sized 3/4 of
-      // the front panel, one per box.
-      { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 },
-    ];
+    const panelTypes = [];
+    if (enclosureFits) {
+      panelTypes.push({ label: "Enclosure base", flatW: enclosureFlatW, flatH: enclosureFlatH, qty: 1 });
+    } else {
+      panelTypes.push({ label: "Enclosure \u2013 Back", flatW: frontFlatW, flatH: frontFlatH, qty: 1 });
+      panelTypes.push({ label: "Enclosure \u2013 Left", flatW: sideFlatW, flatH: sideFlatH, qty: 1 });
+      panelTypes.push({ label: "Enclosure \u2013 Right", flatW: sideFlatW, flatH: sideFlatH, qty: 1 });
+    }
+    panelTypes.push({ label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 });
+    // Door / Cover: same footprint as the front face (box width x box
+    // height), not the side footprint.
+    panelTypes.push({ label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 2 });
+    // Back plate (mounting plate inside the enclosure): sized 3/4 of
+    // the front panel, one per box.
+    panelTypes.push({ label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 });
 
     const sheetArea = STEEL_SHEET_W * STEEL_SHEET_H;
     const pieces = [];
@@ -586,7 +626,7 @@
         // shelves than leaving every panel in its "natural" orientation.
         const w = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatW : flatH;
         const h = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatH : flatW;
-        for (let i = 0; i < p.qty; i++) pieces.push({ w, h });
+        for (let i = 0; i < p.qty; i++) pieces.push({ w, h, label: p.label });
       }
       return {
         label: p.label,
@@ -602,7 +642,8 @@
     });
 
     const exceedsAny = rows.some((r) => r.exceedsSheet);
-    const totalSheets = packSheets(pieces, STEEL_SHEET_W, STEEL_SHEET_H);
+    const packResult = packSheets(pieces, STEEL_SHEET_W, STEEL_SHEET_H, STEEL_KERF_MM);
+    const totalSheets = packResult.sheetCount;
 
     return {
       rows,
@@ -611,6 +652,8 @@
       sheetW: STEEL_SHEET_W,
       sheetH: STEEL_SHEET_H,
       flange: STEEL_FLANGE_MM,
+      kerf: STEEL_KERF_MM,
+      placements: packResult.placements,
     };
   }
 
@@ -1539,6 +1582,81 @@
     ]);
   }
 
+  const STEEL_PANEL_COLORS = {
+    "Enclosure base": "#C1501C",
+    "Enclosure \u2013 Back": "#C1501C",
+    "Enclosure \u2013 Left": "#C1501C",
+    "Enclosure \u2013 Right": "#C1501C",
+    "Top / Bottom": "#2F6B4F",
+    "Door / Cover": "#D9A441",
+    "Back plate": "#4A6FA5",
+  };
+  const STEEL_PANEL_COLOR_FALLBACK = "#8A8577";
+
+  // Draws the actual nested layout from packSheets()'s placements: one
+  // SVG per opened sheet, each piece drawn to scale and colored by panel
+  // type, with a label when there's enough room to read it. This mirrors
+  // exactly what the shelf-packing algorithm decided — not a separate
+  // illustration — so it stays accurate if the box dimensions change.
+  function renderSteelSheetDiagram(data) {
+    if (!data.placements || data.placements.length === 0) return null;
+
+    const sheetPanels = [];
+    for (let si = 0; si < data.totalSheets; si++) {
+      const pieces = data.placements.filter((p) => p.sheet === si);
+      const rectsMarkup = pieces
+        .map((p) => {
+          const color = STEEL_PANEL_COLORS[p.label] || STEEL_PANEL_COLOR_FALLBACK;
+          const showLabel = p.w > 220 && p.h > 90;
+          let markup =
+            '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h +
+            '" fill="' + color + '" fill-opacity="0.78" stroke="#1B1F22" stroke-width="4" />';
+          if (showLabel) {
+            const fontSize = Math.max(20, Math.min(34, p.h * 0.18));
+            markup +=
+              '<text x="' + (p.x + p.w / 2) + '" y="' + (p.y + p.h / 2) +
+              '" text-anchor="middle" dominant-baseline="middle" font-size="' + fontSize +
+              '" font-family="IBM Plex Sans, sans-serif" font-weight="600" fill="#1B1F22">' + p.label + "</text>";
+          }
+          return markup;
+        })
+        .join("");
+
+      const svgMarkup =
+        '<svg viewBox="0 0 ' + data.sheetW + " " + data.sheetH +
+        '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">' +
+        '<rect x="0" y="0" width="' + data.sheetW + '" height="' + data.sheetH +
+        '" fill="#FFFFFF" stroke="#1B1F22" stroke-width="6" />' +
+        rectsMarkup +
+        "</svg>";
+      const svgWrap = el("div", { class: "steel-sheet-diagram-svg-wrap", html: svgMarkup }, []);
+
+      sheetPanels.push(
+        el("div", { class: "steel-sheet-diagram" }, [
+          el("div", { class: "steel-sheet-diagram-title" }, ["Sheet " + (si + 1) + " of " + data.totalSheets]),
+          svgWrap,
+        ])
+      );
+    }
+
+    const presentLabels = [...new Set(data.rows.filter((r) => !r.exceedsSheet).map((r) => r.label))];
+    const legend = el(
+      "div",
+      { class: "steel-sheet-legend" },
+      presentLabels.map((label) =>
+        el("div", { class: "steel-sheet-legend-item" }, [
+          el("span", {
+            class: "steel-sheet-legend-swatch",
+            style: "background:" + (STEEL_PANEL_COLORS[label] || STEEL_PANEL_COLOR_FALLBACK) + ";",
+          }),
+          el("span", {}, [label]),
+        ])
+      )
+    );
+
+    return el("div", { class: "steel-sheet-diagram-wrap" }, [legend, ...sheetPanels]);
+  }
+
   function renderSteelSheetBlock(data) {
     if (!data) {
       return el("div", { class: "card" }, [
@@ -1568,6 +1686,10 @@
             el("span", {}, ["Flange allowance (per edge)"]),
             el("span", { class: "mono" }, [data.flange + "mm"]),
           ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Cutting allowance (between pieces)"]),
+            el("span", { class: "mono" }, [data.kerf + "mm"]),
+          ]),
           ...rowLines,
         ]),
         el("div", { class: "busbar-total" }, [
@@ -1579,6 +1701,7 @@
               "One or more panels exceed the " + data.sheetW + "\u00d7" + data.sheetH + " sheet \u2014 needs a manual cutting plan.",
             ])
           : null,
+        renderSteelSheetDiagram(data),
       ]),
     ]);
   }
@@ -2083,27 +2206,50 @@
       el(
         "div",
         { class: "receipt-items" },
-        totals.breakerLines.map((line) =>
-          el("div", { class: "receipt-line item" }, [
-            el("span", { class: "receipt-item-label" }, [
-              line.label +
-                ": " +
-                line.brand +
-                " " +
-                line.model +
-                " (" +
-                line.at +
-                "A, " +
-                line.poles +
-                "P)" +
-                (line.qty > 1 ? " \u00d7" + line.qty : ""),
-            ]),
-            el("span", { class: "mono" }, [
-              line.spare ? "SPARE" : line.unitPrice === null ? "NO PRICE" : formatMoney(line.lineCost),
-            ]),
-          ])
-        )
+        (() => {
+          // Each breaker line renders as 3 rows, receipt-style:
+          //  1. Brand/model descriptor  ---  unit price
+          //  2. "quantity"              ---  x N
+          //  3. (blank)                 ---  line total
+          // Main lines render directly under a "Main:" header; every
+          // Branch line groups under one shared "Branch:" header instead
+          // of repeating "Branch N:" per line.
+          function breakerGroup(line) {
+            const descriptor = line.brand + " " + line.model + " (" + line.at + "A, " + line.poles + "P)";
+            const unitPriceText = line.spare ? "SPARE" : line.unitPrice === null ? "NO PRICE" : formatMoney(line.unitPrice);
+            const totalText = line.spare ? "SPARE" : line.unitPrice === null ? "NO PRICE" : formatMoney(line.lineCost);
+            return el("div", { class: "receipt-breaker-group" }, [
+              el("div", { class: "receipt-breaker-row name-row" }, [
+                el("span", { class: "receipt-breaker-title" }, [descriptor]),
+                el("span", { class: "mono" }, [unitPriceText]),
+              ]),
+              el("div", { class: "receipt-breaker-row qty-row" }, [
+                el("span", { class: "receipt-qty-label" }, ["quantity"]),
+                el("span", { class: "mono" }, ["\u00d7" + line.qty]),
+              ]),
+              el("div", { class: "receipt-breaker-row total-row" }, [
+                el("span", {}, [""]),
+                el("span", { class: "mono" }, [totalText]),
+              ]),
+            ]);
+          }
+
+          const mainLines = totals.breakerLines.filter((l) => l.label.startsWith("Main"));
+          const branchLines = totals.breakerLines.filter((l) => !l.label.startsWith("Main"));
+
+          return [
+            mainLines.length ? el("div", { class: "receipt-section-label" }, ["Main:"]) : null,
+            ...mainLines.map((l) => breakerGroup(l)),
+            branchLines.length ? el("div", { class: "receipt-section-label" }, ["Branches:"]) : null,
+            ...branchLines.map((l) => breakerGroup(l)),
+          ];
+        })()
       ),
+
+      el("div", { class: "receipt-line subtotal" }, [
+        el("span", {}, ["Total Breaker cost"]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.cost)]),
+      ]),
 
       el("div", { class: "receipt-line" }, [
         el("span", {}, ["Busbar (+20%)"]),
