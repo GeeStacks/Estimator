@@ -518,8 +518,8 @@
   // resort. This is a standard, fast approximation for 2D nesting —
   // not a perfect/optimal cut — but tracks real material use far better
   // than dedicating a whole sheet to each panel type.
-  const STEEL_SHEET_W = 2440;
-  const STEEL_SHEET_H = 1220;
+  const STEEL_SHEET_W = 1220;
+  const STEEL_SHEET_H = 2440;
   const STEEL_FLANGE_MM = 15;
   const STEEL_KERF_MM = 5; // gap kept between adjacent nested pieces
 
