@@ -501,8 +501,8 @@
   //    separate flat panels instead (back: width x height, left/right:
   //    depth x height each).
   //  - Top / Bottom: 2 separate flat panels, width x depth each.
-  //  - Door / Cover: 2 separate flat panels, width x height each (the
-  //    same footprint as the front face).
+  //  - Door / Cover: 1 flat panel, width x height (the same footprint
+  //    as the front face).
   //  - Back plate: 1 flat panel, sized 3/4 of the front panel size.
   // Every panel gets a 15mm flange allowance on all 4 edges (30mm added
   // to each flat dimension) before nesting onto 2440x1220 sheets, with a
@@ -518,6 +518,9 @@
   // resort. This is a standard, fast approximation for 2D nesting —
   // not a perfect/optimal cut — but tracks real material use far better
   // than dedicating a whole sheet to each panel type.
+  // Sheet is handled in portrait orientation on the CNC (1220mm wide,
+  // 2440mm tall) — the packing logic itself is unchanged, this just
+  // swaps which physical dimension is "width" vs "height" for it.
   const STEEL_SHEET_W = 1220;
   const STEEL_SHEET_H = 2440;
   const STEEL_FLANGE_MM = 15;
@@ -608,7 +611,7 @@
     panelTypes.push({ label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 });
     // Door / Cover: same footprint as the front face (box width x box
     // height), not the side footprint.
-    panelTypes.push({ label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 2 });
+    panelTypes.push({ label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 });
     // Back plate (mounting plate inside the enclosure): sized 3/4 of
     // the front panel, one per box.
     panelTypes.push({ label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 });
@@ -1629,7 +1632,11 @@
         '" fill="#FFFFFF" stroke="#1B1F22" stroke-width="6" />' +
         rectsMarkup +
         "</svg>";
-      const svgWrap = el("div", { class: "steel-sheet-diagram-svg-wrap", html: svgMarkup }, []);
+      const svgWrap = el(
+        "div",
+        { class: "steel-sheet-diagram-svg-wrap", style: "aspect-ratio:" + data.sheetW + "/" + data.sheetH + ";", html: svgMarkup },
+        []
+      );
 
       sheetPanels.push(
         el("div", { class: "steel-sheet-diagram" }, [
