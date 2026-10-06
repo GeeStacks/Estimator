@@ -336,6 +336,59 @@ table.breaker-table td.num { text-align: right; }
   .busbar-block:first-child { border-right: none; border-bottom: 1px solid var(--line); }
 }
 
+/* Steel sheet nesting diagram */
+.steel-sheet-diagram-wrap {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.steel-sheet-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.steel-sheet-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.steel-sheet-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+  border: 1px solid var(--line);
+  flex: none;
+}
+.steel-sheet-diagram-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.steel-sheet-diagram-svg-wrap {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  aspect-ratio: 1220 / 2440; /* fallback; actual ratio is set inline per sheet */
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.steel-sheet-diagram-svg-wrap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .spare-cell { text-align: center; }
 .spare-cell input[type="checkbox"] { width: 16px; height: 16px; }
 
@@ -547,6 +600,53 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.receipt-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+.receipt-breaker-group {
+  padding: 5px 0;
+}
+.receipt-breaker-group.indented {
+  padding-left: 14px;
+}
+.receipt-breaker-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.receipt-breaker-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 10px;
+}
+.receipt-breaker-row.name-row {
+  padding-left: 0;
+}
+.receipt-qty-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.receipt-breaker-row.total-row {
+  padding-top: 2px;
+}
+.receipt-breaker-row.total-row .mono {
+  font-weight: 600;
+  color: var(--ink);
 }
 .receipt-adjust-row {
   display: flex;
