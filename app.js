@@ -509,18 +509,23 @@
   // 5mm cutting allowance kept between every pair of nested pieces.
   //
   // Different panel types ARE nested together on the same sheet — e.g.
-  // leftover width next to a tall Enclosure base panel can still hold a
-  // Top/Bottom or Door/Cover panel — using a shelf first-fit-decreasing-
-  // height packer: panels are sorted tallest-first, each one dropped into
-  // the first existing shelf (row) it fits in width-and-height-wise
-  // across any sheet opened so far, a new shelf started on a sheet with
-  // enough remaining vertical room, or a new sheet opened as a last
-  // resort. This is a standard, fast approximation for 2D nesting —
-  // not a perfect/optimal cut — but tracks real material use far better
-  // than dedicating a whole sheet to each panel type.
+  // leftover height next to a wide Enclosure base panel can still hold a
+  // Top/Bottom or Door/Cover panel — using a column first-fit-decreasing-
+  // width packer: panels are sorted widest-first, each one dropped into
+  // the first existing column it fits in width-and-height-wise across
+  // any sheet opened so far, a new column started on a sheet with enough
+  // remaining horizontal room, or a new sheet opened as a last resort.
+  // Each column fills top-to-bottom, and columns themselves fill left-to
+  // -right across the sheet — matching how the CNC head sweeps a
+  // portrait-fed sheet (cut down one column, then move right to the
+  // next) rather than cutting row by row. This is a standard, fast
+  // approximation for 2D nesting — not a perfect/optimal cut — but
+  // tracks real material use far better than dedicating a whole sheet to
+  // each panel type.
   // Sheet is handled in portrait orientation on the CNC (1220mm wide,
-  // 2440mm tall) — the packing logic itself is unchanged, this just
-  // swaps which physical dimension is "width" vs "height" for it.
+  // 2440mm tall) — swapping which physical dimension is "width" vs
+  // "height" for it is what makes column-based (left-to-right) packing
+  // the natural fill order here.
   const STEEL_SHEET_W = 1220;
   const STEEL_SHEET_H = 2440;
   const STEEL_FLANGE_MM = 15;
@@ -530,29 +535,30 @@
   // { sheet, x, y, w, h, label } — sheet is a 0-based sheet index, x/y is
   // the piece's top-left corner within that sheet. Used both for the
   // sheet-count total and to actually draw the layout. `kerf` is the gap
-  // reserved after each piece (to its right, and below its shelf row) so
-  // nested pieces never sit flush against their neighbor.
+  // reserved after each piece (below it within its column, and to the
+  // right of its column) so nested pieces never sit flush against their
+  // neighbor.
   function packSheets(pieces, sheetW, sheetH, kerf) {
     if (pieces.length === 0) return { sheetCount: 0, placements: [] };
-    const sorted = [...pieces].sort((a, b) => b.h - a.h);
-    const sheets = []; // each: { usedHeight, shelves: [{ height, usedWidth, y }] }
+    const sorted = [...pieces].sort((a, b) => b.w - a.w);
+    const sheets = []; // each: { usedWidth, columns: [{ width, usedHeight, x }] }
     const placements = [];
 
     function place(piece) {
       for (let si = 0; si < sheets.length; si++) {
         const sheet = sheets[si];
-        for (const shelf of sheet.shelves) {
-          if (piece.h <= shelf.height && sheetW - shelf.usedWidth >= piece.w) {
-            placements.push({ sheet: si, x: shelf.usedWidth, y: shelf.y, w: piece.w, h: piece.h, label: piece.label });
-            shelf.usedWidth += piece.w + kerf; // leave a kerf gap before the next piece in this shelf
+        for (const col of sheet.columns) {
+          if (piece.w <= col.width && sheetH - col.usedHeight >= piece.h) {
+            placements.push({ sheet: si, x: col.x, y: col.usedHeight, w: piece.w, h: piece.h, label: piece.label });
+            col.usedHeight += piece.h + kerf; // leave a kerf gap before the next piece down this column
             return true;
           }
         }
-        if (sheet.usedHeight + piece.h <= sheetH) {
-          const y = sheet.usedHeight;
-          sheet.shelves.push({ height: piece.h, usedWidth: piece.w + kerf, y });
-          placements.push({ sheet: si, x: 0, y, w: piece.w, h: piece.h, label: piece.label });
-          sheet.usedHeight = y + piece.h + kerf; // leave a kerf gap before the next shelf
+        if (sheet.usedWidth + piece.w <= sheetW) {
+          const x = sheet.usedWidth;
+          sheet.columns.push({ width: piece.w, usedHeight: piece.h + kerf, x });
+          placements.push({ sheet: si, x, y: 0, w: piece.w, h: piece.h, label: piece.label });
+          sheet.usedWidth = x + piece.w + kerf; // leave a kerf gap before the next column
           return true;
         }
       }
@@ -561,7 +567,7 @@
 
     sorted.forEach((piece) => {
       if (!place(piece)) {
-        sheets.push({ usedHeight: piece.h + kerf, shelves: [{ height: piece.h, usedWidth: piece.w + kerf, y: 0 }] });
+        sheets.push({ usedWidth: piece.w + kerf, columns: [{ width: piece.w, usedHeight: piece.h + kerf, x: 0 }] });
         placements.push({ sheet: sheets.length - 1, x: 0, y: 0, w: piece.w, h: piece.h, label: piece.label });
       }
     });
@@ -625,10 +631,10 @@
       const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
       const exceedsSheet = !fitsNormal && !fitsRotated;
       if (!exceedsSheet) {
-        // Orient with the smaller side as height — packs tighter into
-        // shelves than leaving every panel in its "natural" orientation.
-        const w = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatW : flatH;
-        const h = !fitsRotated || (fitsNormal && flatH <= flatW) ? flatH : flatW;
+        // Orient with the smaller side as width — packs tighter into
+        // columns than leaving every panel in its "natural" orientation.
+        const w = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatW : flatH;
+        const h = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatH : flatW;
         for (let i = 0; i < p.qty; i++) pieces.push({ w, h, label: p.label });
       }
       return {
@@ -646,11 +652,13 @@
 
     const exceedsAny = rows.some((r) => r.exceedsSheet);
     const packResult = packSheets(pieces, STEEL_SHEET_W, STEEL_SHEET_H, STEEL_KERF_MM);
-    const totalSheets = packResult.sheetCount;
+    const totalSheets = packResult.sheetCount; // actual packed count — what the diagram draws
+    const totalSheetsWithSafety = totalSheets > 0 ? totalSheets + 1 : 0; // +1 safety margin, display only
 
     return {
       rows,
       totalSheets,
+      totalSheetsWithSafety,
       exceedsAny,
       sheetW: STEEL_SHEET_W,
       sheetH: STEEL_SHEET_H,
@@ -928,6 +936,7 @@
   let supplyVoltage = 230;
   let needsNeutralBar = false;
   let busbarSourceMode = "custom"; // "custom" (size/AT-based) | "inStock" (branch-count based)
+  let showSteelSheetDiagram = false;
   let profitMode = "percent"; // "percent" | "flat"
   let profitValue = 0;
   let discountMode = "percent"; // "percent" | "flat"
@@ -1701,14 +1710,34 @@
         ]),
         el("div", { class: "busbar-total" }, [
           el("span", {}, ["Total sheets (all panels nested together)"]),
-          el("span", { class: "mono" }, [String(data.totalSheets)]),
+          el("span", { class: "mono" }, [String(data.totalSheetsWithSafety)]),
         ]),
+        data.totalSheetsWithSafety > 0
+          ? el("div", { class: "busbar-note" }, [
+              "Includes +1 sheet safety margin (" + data.totalSheets + " actually nested, shown below).",
+            ])
+          : null,
         data.exceedsAny
           ? el("div", { class: "warn" }, [
               "One or more panels exceed the " + data.sheetW + "\u00d7" + data.sheetH + " sheet \u2014 needs a manual cutting plan.",
             ])
           : null,
-        renderSteelSheetDiagram(data),
+        data.totalSheets > 0
+          ? el("div", { class: "assembly-toggle", style: "margin-top:10px;" }, [
+              el("label", { class: "assembly-toggle-label" }, [
+                el("input", {
+                  type: "checkbox",
+                  checked: showSteelSheetDiagram ? "checked" : undefined,
+                  onchange: (e) => {
+                    showSteelSheetDiagram = e.target.checked;
+                    render();
+                  },
+                }),
+                el("span", {}, ["Show visual guide"]),
+              ]),
+            ])
+          : null,
+        showSteelSheetDiagram ? renderSteelSheetDiagram(data) : null,
       ]),
     ]);
   }
