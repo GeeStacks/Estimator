@@ -509,23 +509,23 @@
   // 5mm cutting allowance kept between every pair of nested pieces.
   //
   // Different panel types ARE nested together on the same sheet — e.g.
-  // leftover height next to a wide Enclosure base panel can still hold a
-  // Top/Bottom or Door/Cover panel — using a column first-fit-decreasing-
-  // width packer: panels are sorted widest-first, each one dropped into
-  // the first existing column it fits in width-and-height-wise across
-  // any sheet opened so far, a new column started on a sheet with enough
-  // remaining horizontal room, or a new sheet opened as a last resort.
-  // Each column fills top-to-bottom, and columns themselves fill left-to
-  // -right across the sheet — matching how the CNC head sweeps a
-  // portrait-fed sheet (cut down one column, then move right to the
-  // next) rather than cutting row by row. This is a standard, fast
-  // approximation for 2D nesting — not a perfect/optimal cut — but
-  // tracks real material use far better than dedicating a whole sheet to
-  // each panel type.
+  // leftover space below a wide Enclosure base panel can still hold a
+  // Top/Bottom or Door/Cover panel beside it — using free-rectangle
+  // (guillotine) packing: panels are sorted widest-first, each one
+  // dropped into the leftmost free rectangle it fits across any sheet
+  // opened so far (opening a new sheet only as a last resort), which
+  // then splits the unused space into a right-of-piece strip and a
+  // below-piece strip spanning the full original rectangle's width — so
+  // the full sheet width really is reclaimed below a wide piece, not
+  // just that piece's own footprint. This fills left-to-right overall,
+  // matching how the CNC head sweeps a portrait-fed sheet. It's a
+  // standard, fast approximation for 2D nesting — not a perfect/optimal
+  // cut — but tracks real material use far better than dedicating a
+  // whole sheet to each panel type.
   // Sheet is handled in portrait orientation on the CNC (1220mm wide,
   // 2440mm tall) — swapping which physical dimension is "width" vs
-  // "height" for it is what makes column-based (left-to-right) packing
-  // the natural fill order here.
+  // "height" for it is what makes left-to-right packing the natural
+  // fill order here.
   const STEEL_SHEET_W = 1220;
   const STEEL_SHEET_H = 2440;
   const STEEL_FLANGE_MM = 15;
@@ -538,27 +538,55 @@
   // reserved after each piece (below it within its column, and to the
   // right of its column) so nested pieces never sit flush against their
   // neighbor.
+  // Free-rectangle (guillotine) packing: each sheet tracks a list of
+  // unused rectangles. Placing a piece into one of them consumes it and
+  // splits the leftover space into up to two new free rectangles:
+  //  - a "right" strip, same height as the placed piece, covering the
+  //    width left over to its right;
+  //  - a "bottom" strip spanning the FULL width of the rectangle that
+  //    was split (not just the placed piece's own width), covering the
+  //    height left over below it.
+  // That full-width bottom strip is what makes this correct where a
+  // simpler column/shelf approach isn't: once you move below a wide
+  // piece, the entire sheet width below it is genuinely free again, not
+  // just the width that piece itself used — so a later, narrower piece
+  // can use that full width instead of being wrongly boxed into the
+  // first piece's own column. Among every free rectangle a piece fits,
+  // the leftmost one is used (tie-broken topmost) to keep the overall
+  // fill order left-to-right, matching how the CNC sweeps the sheet.
   function packSheets(pieces, sheetW, sheetH, kerf) {
     if (pieces.length === 0) return { sheetCount: 0, placements: [] };
     const sorted = [...pieces].sort((a, b) => b.w - a.w);
-    const sheets = []; // each: { usedWidth, columns: [{ width, usedHeight, x }] }
+    const sheets = []; // each: array of free rects { x, y, w, h }
     const placements = [];
+
+    function splitFreeRect(freeRects, rect, piece) {
+      const rightW = rect.w - piece.w - kerf;
+      if (rightW > 0) {
+        freeRects.push({ x: rect.x + piece.w + kerf, y: rect.y, w: rightW, h: piece.h });
+      }
+      const bottomH = rect.h - piece.h - kerf;
+      if (bottomH > 0) {
+        freeRects.push({ x: rect.x, y: rect.y + piece.h + kerf, w: rect.w, h: bottomH });
+      }
+    }
 
     function place(piece) {
       for (let si = 0; si < sheets.length; si++) {
-        const sheet = sheets[si];
-        for (const col of sheet.columns) {
-          if (piece.w <= col.width && sheetH - col.usedHeight >= piece.h) {
-            placements.push({ sheet: si, x: col.x, y: col.usedHeight, w: piece.w, h: piece.h, label: piece.label });
-            col.usedHeight += piece.h + kerf; // leave a kerf gap before the next piece down this column
-            return true;
+        const freeRects = sheets[si];
+        let bestIdx = -1;
+        for (let i = 0; i < freeRects.length; i++) {
+          const r = freeRects[i];
+          if (piece.w > r.w || piece.h > r.h) continue;
+          if (bestIdx === -1 || r.x < freeRects[bestIdx].x || (r.x === freeRects[bestIdx].x && r.y < freeRects[bestIdx].y)) {
+            bestIdx = i;
           }
         }
-        if (sheet.usedWidth + piece.w <= sheetW) {
-          const x = sheet.usedWidth;
-          sheet.columns.push({ width: piece.w, usedHeight: piece.h + kerf, x });
-          placements.push({ sheet: si, x, y: 0, w: piece.w, h: piece.h, label: piece.label });
-          sheet.usedWidth = x + piece.w + kerf; // leave a kerf gap before the next column
+        if (bestIdx !== -1) {
+          const rect = freeRects[bestIdx];
+          placements.push({ sheet: si, x: rect.x, y: rect.y, w: piece.w, h: piece.h, label: piece.label });
+          freeRects.splice(bestIdx, 1);
+          splitFreeRect(freeRects, rect, piece);
           return true;
         }
       }
@@ -567,8 +595,12 @@
 
     sorted.forEach((piece) => {
       if (!place(piece)) {
-        sheets.push({ usedWidth: piece.w + kerf, columns: [{ width: piece.w, usedHeight: piece.h + kerf, x: 0 }] });
-        placements.push({ sheet: sheets.length - 1, x: 0, y: 0, w: piece.w, h: piece.h, label: piece.label });
+        const freeRects = [{ x: 0, y: 0, w: sheetW, h: sheetH }];
+        sheets.push(freeRects);
+        const rect = freeRects[0];
+        placements.push({ sheet: sheets.length - 1, x: rect.x, y: rect.y, w: piece.w, h: piece.h, label: piece.label });
+        freeRects.splice(0, 1);
+        splitFreeRect(freeRects, rect, piece);
       }
     });
 
