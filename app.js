@@ -1643,7 +1643,20 @@
   // exactly what the shelf-packing algorithm decided — not a separate
   // illustration — so it stays accurate if the box dimensions change.
   function renderSteelSheetDiagram(data) {
-    if (!data.placements || data.placements.length === 0) return null;
+    const excludedLabels = data.rows.filter((r) => r.exceedsSheet).map((r) => r.label);
+    const excludedNote = excludedLabels.length
+      ? el("div", { class: "warn" }, [
+          excludedLabels.join(", ") +
+            (excludedLabels.length > 1 ? " are" : " is") +
+            " individually too big for a single " + data.sheetW + "\u00d7" + data.sheetH +
+            " sheet, so " + (excludedLabels.length > 1 ? "they're" : "it's") +
+            " left out of the diagram below rather than shown incorrectly \u2014 see the rows above.",
+        ])
+      : null;
+
+    if (!data.placements || data.placements.length === 0) {
+      return excludedNote ? el("div", { class: "steel-sheet-diagram-wrap" }, [excludedNote]) : null;
+    }
 
     const sheetPanels = [];
     for (let si = 0; si < data.totalSheets; si++) {
@@ -1702,7 +1715,7 @@
       )
     );
 
-    return el("div", { class: "steel-sheet-diagram-wrap" }, [legend, ...sheetPanels]);
+    return el("div", { class: "steel-sheet-diagram-wrap" }, [excludedNote, legend, ...sheetPanels]);
   }
 
   function renderSteelSheetBlock(data) {
@@ -1754,7 +1767,7 @@
               "One or more panels exceed the " + data.sheetW + "\u00d7" + data.sheetH + " sheet \u2014 needs a manual cutting plan.",
             ])
           : null,
-        data.totalSheets > 0
+        data.totalSheets > 0 || data.exceedsAny
           ? el("div", { class: "assembly-toggle", style: "margin-top:10px;" }, [
               el("label", { class: "assembly-toggle-label" }, [
                 el("input", {
