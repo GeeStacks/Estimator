@@ -617,9 +617,6 @@
     // Front/back/door footprint: box width x box height, plus flange.
     const frontFlatW = W + STEEL_FLANGE_MM * 2;
     const frontFlatH = H + STEEL_FLANGE_MM * 2;
-    // Left/right side footprint: box depth x box height, plus flange.
-    const sideFlatW = D + STEEL_FLANGE_MM * 2;
-    const sideFlatH = H + STEEL_FLANGE_MM * 2;
 
     function fitsSheetEitherWay(flatW, flatH) {
       const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
@@ -627,59 +624,103 @@
       return fitsNormal || fitsRotated;
     }
 
-    // Enclosure base: back + left + right sides, bent from one flat
-    // sheet into a U-shaped shell rather than cut as 3 separate panels —
-    // so its flat pattern unfolds to (left depth + back width + right
-    // depth) wide by the box height tall, as a single piece (qty 1).
-    // If that combined flat pattern doesn't fit a sheet in either
-    // orientation, fall back to 3 separate flat panels — back, left,
-    // right — each handled on its own instead.
-    const enclosureFlatW = (W + 2 * D) + STEEL_FLANGE_MM * 2;
-    const enclosureFlatH = H + STEEL_FLANGE_MM * 2;
-    const enclosureFits = fitsSheetEitherWay(enclosureFlatW, enclosureFlatH);
-
-    const panelTypes = [];
-    if (enclosureFits) {
-      panelTypes.push({ label: "Enclosure base", flatW: enclosureFlatW, flatH: enclosureFlatH, qty: 1 });
-    } else {
-      panelTypes.push({ label: "Enclosure \u2013 Back", flatW: frontFlatW, flatH: frontFlatH, qty: 1 });
-      panelTypes.push({ label: "Enclosure \u2013 Left", flatW: sideFlatW, flatH: sideFlatH, qty: 1 });
-      panelTypes.push({ label: "Enclosure \u2013 Right", flatW: sideFlatW, flatH: sideFlatH, qty: 1 });
+    // When a flat panel doesn't fit a sheet on its own, cut it lengthwise
+    // into N equal strips instead of excluding it: the longer dimension
+    // is divided into N equal segments, and the shorter dimension stays
+    // full-size on every strip. Searches upward from minParts (or 2) for
+    // the smallest N where each resulting strip actually fits a sheet;
+    // returns null if nothing up to 12 parts works.
+    function splitLengthwise(flatW, flatH, minParts) {
+      const wIsLonger = flatW >= flatH;
+      const long = wIsLonger ? flatW : flatH;
+      const short = wIsLonger ? flatH : flatW;
+      for (let n = Math.max(2, minParts || 2); n <= 12; n++) {
+        const segLen = long / n;
+        const segFlatW = wIsLonger ? segLen : short;
+        const segFlatH = wIsLonger ? short : segLen;
+        if (fitsSheetEitherWay(segFlatW, segFlatH)) {
+          return { n, flatW: segFlatW, flatH: segFlatH };
+        }
+      }
+      return null;
     }
-    panelTypes.push({ label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 });
-    // Door / Cover: same footprint as the front face (box width x box
-    // height), not the side footprint.
-    panelTypes.push({ label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 });
-    // Back plate (mounting plate inside the enclosure): sized 3/4 of
-    // the front panel, one per box.
-    panelTypes.push({ label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 });
+
+    // Enclosure base: back + left + right sides, bent from one flat
+    // sheet into a U-shaped shell — flat pattern unfolds to (left depth
+    // + back width + right depth) wide by the box height tall, as a
+    // single piece (qty 1). If that doesn't fit a sheet, it's always cut
+    // lengthwise into exactly 3 equal strips (dividing the unfolded
+    // width into thirds, keeping the full height on each) rather than
+    // the natural back/left/right boundaries — simpler welding seams,
+    // same idea as splitLengthwise but a fixed 3-way split regardless of
+    // how close it already is to fitting.
+    const panelTypes = [
+      { label: "Enclosure base", flatW: (W + 2 * D) + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 1, minSplitParts: 3 },
+      { label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 },
+      // Door / Cover: same footprint as the front face (box width x box
+      // height), not the side footprint.
+      { label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 },
+      // Back plate (mounting plate inside the enclosure): sized 3/4 of
+      // the front panel, one per box.
+      { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 },
+    ];
 
     const sheetArea = STEEL_SHEET_W * STEEL_SHEET_H;
     const pieces = [];
-    const rows = panelTypes.map((p) => {
-      const flatW = p.flatW;
-      const flatH = p.flatH;
+    const rows = [];
+
+    function orientForPacking(flatW, flatH) {
+      // Orient with the smaller side as width — packs tighter into
+      // columns than leaving every panel in its "natural" orientation.
       const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
       const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
-      const exceedsSheet = !fitsNormal && !fitsRotated;
-      if (!exceedsSheet) {
-        // Orient with the smaller side as width — packs tighter into
-        // columns than leaving every panel in its "natural" orientation.
-        const w = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatW : flatH;
-        const h = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatH : flatW;
+      const w = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatW : flatH;
+      const h = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatH : flatW;
+      return { w, h };
+    }
+
+    panelTypes.forEach((p) => {
+      if (fitsSheetEitherWay(p.flatW, p.flatH)) {
+        const { w, h } = orientForPacking(p.flatW, p.flatH);
         for (let i = 0; i < p.qty; i++) pieces.push({ w, h, label: p.label });
+        rows.push({
+          label: p.label,
+          flatW: Math.round(p.flatW),
+          flatH: Math.round(p.flatH),
+          qty: p.qty,
+          exceedsSheet: false,
+          areaPct: (p.flatW * p.flatH * p.qty * 100) / sheetArea,
+        });
+        return;
       }
-      return {
+
+      const split = splitLengthwise(p.flatW, p.flatH, p.minSplitParts);
+      if (split) {
+        const label = p.label + " (" + split.n + "-way split)";
+        const { w, h } = orientForPacking(split.flatW, split.flatH);
+        const totalQty = p.qty * split.n;
+        for (let i = 0; i < totalQty; i++) pieces.push({ w, h, label });
+        rows.push({
+          label,
+          flatW: Math.round(split.flatW),
+          flatH: Math.round(split.flatH),
+          qty: totalQty,
+          exceedsSheet: false,
+          areaPct: (split.flatW * split.flatH * totalQty * 100) / sheetArea,
+        });
+        return;
+      }
+
+      // Genuinely can't be made to fit even split into up to 12 equal
+      // lengthwise strips — report as exceeding rather than guessing.
+      rows.push({
         label: p.label,
-        flatW: Math.round(flatW),
-        flatH: Math.round(flatH),
+        flatW: Math.round(p.flatW),
+        flatH: Math.round(p.flatH),
         qty: p.qty,
-        exceedsSheet,
-        // Share of one sheet's area this panel type's total pieces take
-        // up — a quick per-type material-use indicator, separate from
-        // the actual combined nested sheet count below.
-        areaPct: (flatW * flatH * p.qty * 100) / sheetArea,
-      };
+        exceedsSheet: true,
+        areaPct: (p.flatW * p.flatH * p.qty * 100) / sheetArea,
+      });
     });
 
     const exceedsAny = rows.some((r) => r.exceedsSheet);
@@ -1628,14 +1669,20 @@
 
   const STEEL_PANEL_COLORS = {
     "Enclosure base": "#C1501C",
-    "Enclosure \u2013 Back": "#C1501C",
-    "Enclosure \u2013 Left": "#C1501C",
-    "Enclosure \u2013 Right": "#C1501C",
     "Top / Bottom": "#2F6B4F",
     "Door / Cover": "#D9A441",
     "Back plate": "#4A6FA5",
   };
   const STEEL_PANEL_COLOR_FALLBACK = "#8A8577";
+
+  // A split panel's label gets a "(N-way split)" suffix (e.g. "Door /
+  // Cover (2-way split)"), so match on that prefix when an exact lookup
+  // misses rather than falling back to gray for every split piece.
+  function steelPanelColor(label) {
+    if (STEEL_PANEL_COLORS[label]) return STEEL_PANEL_COLORS[label];
+    const baseLabel = Object.keys(STEEL_PANEL_COLORS).find((base) => label.indexOf(base) === 0);
+    return baseLabel ? STEEL_PANEL_COLORS[baseLabel] : STEEL_PANEL_COLOR_FALLBACK;
+  }
 
   // Draws the actual nested layout from packSheets()'s placements: one
   // SVG per opened sheet, each piece drawn to scale and colored by panel
@@ -1663,7 +1710,7 @@
       const pieces = data.placements.filter((p) => p.sheet === si);
       const rectsMarkup = pieces
         .map((p) => {
-          const color = STEEL_PANEL_COLORS[p.label] || STEEL_PANEL_COLOR_FALLBACK;
+          const color = steelPanelColor(p.label);
           const showLabel = p.w > 220 && p.h > 90;
           let markup =
             '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h +
@@ -1708,7 +1755,7 @@
         el("div", { class: "steel-sheet-legend-item" }, [
           el("span", {
             class: "steel-sheet-legend-swatch",
-            style: "background:" + (STEEL_PANEL_COLORS[label] || STEEL_PANEL_COLOR_FALLBACK) + ";",
+            style: "background:" + steelPanelColor(label) + ";",
           }),
           el("span", {}, [label]),
         ])
