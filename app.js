@@ -168,6 +168,49 @@
     return { cost, missing, breakdown };
   }
 
+  // Alternative grounding busbar sizing: for every breaker that needs
+  // grounding (same population as computeGroundLugs — main + non-MCB,
+  // non-spare branches), find that breaker's OWN connection lug, step down
+  // one physical size for the grounding lug, and sum the selected lugs'
+  // widths (W, mm). The busbar width itself is this sum + 50mm (bending
+  // clearance + mounting), but the +50mm is added by the caller — this
+  // returns the raw lug-width sum, since that's the "total" the 250mm
+  // threshold is checked against before the alternative method kicks in.
+  function computeGroundingLugWidthTotal() {
+    let totalWidth = 0;
+    let count = 0;
+    let missing = 0; // breaker's own connection lug couldn't be resolved
+    let flagged = 0; // own lug resolved, but no smaller size exists — manual review
+    const breakdown = [];
+
+    function consider(sel) {
+      if (sel.spare) return;
+      const rowData = resolveRowData(sel);
+      if (!rowData) return;
+      if (rowData.type === "MCB") return; // MCBs don't use mech/ground lugs
+      const clearanceRow = lookupClearance(rowData.at);
+      const ownLug = lookupLugDimensionsForAt(rowData.at, clearanceRow);
+      if (!ownLug) {
+        missing += sel.qty;
+        return;
+      }
+      const groundingLug = lugDimensionsOneDown(ownLug.cat_no);
+      if (!groundingLug) {
+        flagged += sel.qty;
+        return;
+      }
+      const width = Number(groundingLug.W) || 0;
+      totalWidth += width * sel.qty;
+      count += sel.qty;
+      breakdown.push({ at: rowData.at, catNo: groundingLug.cat_no, width, qty: sel.qty });
+    }
+
+    consider(main);
+    activeBranches().forEach(consider);
+
+    return { totalWidth, count, missing, flagged, breakdown };
+  }
+
   // Total quantity of active (non-spare, resolved) branch breakers. Used as
   // the lookup key for the "in stock" grounding busbar table.
   function totalActiveBranchQty() {
@@ -201,7 +244,13 @@
     }
 
     const groundBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
-    const standardLength = CONSTANTS.ground_bus_length_mm || 0;
+    const lugWidthTotal = computeGroundingLugWidthTotal();
+    // Alternative sizing only kicks in once the summed lug widths exceed
+    // 250mm — below that, the standard flat-length constant is still used.
+    const useLugWidthMethod = lugWidthTotal.totalWidth > 250;
+    const standardLength = useLugWidthMethod
+      ? lugWidthTotal.totalWidth + 50
+      : CONSTANTS.ground_bus_length_mm || 0;
     const BAR_LENGTH = 6000;
     const pctOfBar = standardLength / BAR_LENGTH;
     const busbarPrice = groundBusbar ? groundBusbar.price : null;
@@ -213,6 +262,8 @@
       busbarNeeded: groundBusbar ? groundBusbar.needed : null,
       exceedsTable: !groundBusbar,
       cost,
+      widthMethod: useLugWidthMethod ? "lugWidth" : "standard",
+      lugWidthTotal: useLugWidthMethod ? lugWidthTotal : null,
     };
   }
 
@@ -245,10 +296,18 @@
       };
     }
 
-    const standardLength = CONSTANTS.neutral_bus_length_mm || 0;
     const mainData = resolveRowData(main);
+    const lugWidthTotal = computeGroundingLugWidthTotal();
+    const useLugWidthMethod = lugWidthTotal.totalWidth > 250;
+    const standardLength = useLugWidthMethod
+      ? lugWidthTotal.totalWidth + 50
+      : CONSTANTS.neutral_bus_length_mm || 0;
     if (!mainData) {
-      return { enabled: true, source: "custom", standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: null };
+      return {
+        enabled: true, source: "custom", standardLength, busbarPrice: null, busbarNeeded: null, exceedsTable: false, cost: null,
+        widthMethod: useLugWidthMethod ? "lugWidth" : "standard",
+        lugWidthTotal: useLugWidthMethod ? lugWidthTotal : null,
+      };
     }
     const neutralBusbar = lookupBusbarOneDown(mainData.type, mainData.at);
     const BAR_LENGTH = 6000;
@@ -260,6 +319,8 @@
       busbarNeeded: neutralBusbar ? neutralBusbar.needed : null,
       exceedsTable: !neutralBusbar,
       cost,
+      widthMethod: useLugWidthMethod ? "lugWidth" : "standard",
+      lugWidthTotal: useLugWidthMethod ? lugWidthTotal : null,
     };
   }
 
@@ -280,6 +341,28 @@
     const mechLug = lookupMechLugs(at);
     const catNo = mechLug && mechLug.cat_no ? mechLug.cat_no : clearanceRow && clearanceRow.mgl_cat_no;
     return lookupLugDimensions(catNo);
+  }
+
+  // Physical lug catalog, smallest to largest, using L (overall length) as
+  // the size proxy since LUG_DIMENSIONS has no single "AT" field to sort by.
+  function sortedLugDimensionsAsc() {
+    return [...LUG_DIMENSIONS].sort((a, b) => Number(a.L) - Number(b.L));
+  }
+
+  // Steps from a given lug catalog number down to the next actually-smaller
+  // physical size (skipping any tied L values), same "one size down" idea
+  // used elsewhere for busbars/mech lugs. Returns null if catNo isn't found
+  // or is already the smallest size available — callers should treat null
+  // as "needs manual review", never silently fall back to an incompatible
+  // (same-or-larger) lug.
+  function lugDimensionsOneDown(catNo) {
+    const sorted = sortedLugDimensionsAsc();
+    const matchIdx = sorted.findIndex((r) => r.cat_no === catNo);
+    if (matchIdx === -1) return null;
+    for (let i = matchIdx - 1; i >= 0; i--) {
+      if (Number(sorted[i].L) !== Number(sorted[matchIdx].L)) return sorted[i];
+    }
+    return null;
   }
 
   function lugFactorMultiplier(at) {
@@ -1387,16 +1470,35 @@
             el("span", { class: "mono" }, [String(data.branchCount)]),
           ]),
         ]
-      : [
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Standard length"]),
-            el("span", { class: "mono" }, [data.standardLength + "mm"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Busbar used"]),
-            el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
-          ]),
-        ];
+      : data.widthMethod === "lugWidth"
+        ? [
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Width method"]),
+              el("span", { class: "mono" }, ["Lug-width total (>250mm)"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Lug widths summed"]),
+              el("span", { class: "mono" }, [data.lugWidthTotal.count + " lugs, " + Math.round(data.lugWidthTotal.totalWidth) + "mm"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar width"]),
+              el("span", { class: "mono" }, [Math.round(data.standardLength) + "mm (+50mm allowance)"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar used"]),
+              el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+            ]),
+          ]
+        : [
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Standard length"]),
+              el("span", { class: "mono" }, [data.standardLength + "mm"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar used"]),
+              el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+            ]),
+          ];
     return el("div", { class: "card" }, [
       el("div", { class: "busbar-block" }, [
         el("div", { class: "busbar-block-title" }, ["Ground busbar"]),
@@ -1418,6 +1520,16 @@
                 : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
             ])
           : null,
+        data.widthMethod === "lugWidth" && (data.lugWidthTotal.missing > 0 || data.lugWidthTotal.flagged > 0)
+          ? el("div", { class: "warn" }, [
+              data.lugWidthTotal.missing > 0
+                ? data.lugWidthTotal.missing + " breaker(s) have no resolvable connection lug \u2014 excluded from the width total, needs manual review. "
+                : "",
+              data.lugWidthTotal.flagged > 0
+                ? data.lugWidthTotal.flagged + " breaker(s) already use the smallest available lug size (no size smaller exists) \u2014 excluded from the width total, needs manual review."
+                : "",
+            ])
+          : null,
       ]),
     ]);
   }
@@ -1437,16 +1549,35 @@
             el("span", { class: "mono" }, [String(data.branchCount)]),
           ]),
         ]
-      : [
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Standard length"]),
-            el("span", { class: "mono" }, [data.standardLength + "mm"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Busbar used"]),
-            el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
-          ]),
-        ];
+      : data.widthMethod === "lugWidth"
+        ? [
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Width method"]),
+              el("span", { class: "mono" }, ["Lug-width total (>250mm)"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Lug widths summed"]),
+              el("span", { class: "mono" }, [data.lugWidthTotal.count + " lugs, " + Math.round(data.lugWidthTotal.totalWidth) + "mm"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar width"]),
+              el("span", { class: "mono" }, [Math.round(data.standardLength) + "mm (+50mm allowance)"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar used"]),
+              el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+            ]),
+          ]
+        : [
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Standard length"]),
+              el("span", { class: "mono" }, [data.standardLength + "mm"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Busbar used"]),
+              el("span", { class: "mono" }, [data.busbarNeeded || "\u2014"]),
+            ]),
+          ];
     return el("div", { class: "card" }, [
       el("div", { class: "busbar-block" }, [
         el("div", { class: "busbar-block-title" }, ["Neutral busbar"]),
@@ -1466,6 +1597,16 @@
               data.source === "inStock"
                 ? "Branch count exceeds the grounding busbars table \u2014 needs a manual quote."
                 : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
+            ])
+          : null,
+        data.widthMethod === "lugWidth" && (data.lugWidthTotal.missing > 0 || data.lugWidthTotal.flagged > 0)
+          ? el("div", { class: "warn" }, [
+              data.lugWidthTotal.missing > 0
+                ? data.lugWidthTotal.missing + " breaker(s) have no resolvable connection lug \u2014 excluded from the width total, needs manual review. "
+                : "",
+              data.lugWidthTotal.flagged > 0
+                ? data.lugWidthTotal.flagged + " breaker(s) already use the smallest available lug size (no size smaller exists) \u2014 excluded from the width total, needs manual review."
+                : "",
             ])
           : null,
       ]),
