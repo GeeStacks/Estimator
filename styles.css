@@ -330,6 +330,11 @@ table.breaker-table td.num { text-align: right; }
   border-top: 1px dashed var(--line);
 }
 .busbar-total .mono { font-family: var(--font-data); }
+.busbar-note {
+  font-size: 11px;
+  color: var(--faint);
+  padding-top: 4px;
+}
 
 @media (max-width: 720px) {
   .busbar-card { grid-template-columns: 1fr; }
@@ -1016,10 +1021,10 @@ table.po-print-table th, table.po-print-table td {
   text-align: left;
 }
 table.po-print-table th { background: #eee; font-weight: 700; }
-table.po-print-table .po-item-no { width: 40px; text-align: center; }
-table.po-print-table .po-qty { width: 50px; text-align: center; }
-table.po-print-table .po-unit { width: 60px; }
-table.po-print-table .po-cost { width: 100px; text-align: right; white-space: nowrap; }
+table.po-print-table .po-item-no { width: 40px; text-align: center; font-size: 8px; }
+table.po-print-table .po-qty { width: 50px; text-align: center; font-size: 8px; }
+table.po-print-table .po-unit { width: 60px; font-size: 8px; }
+table.po-print-table .po-cost { width: 100px; text-align: right; white-space: nowrap; font-size: 8px; }
 table.po-print-table pre {
   margin: 0;
   white-space: pre-wrap;
