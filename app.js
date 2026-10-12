@@ -2017,6 +2017,14 @@
     activeBranches().forEach((sel, i) => consider(sel, "Branch " + (i + 1)));
 
     const eligible = assemblyEligible();
+    // Eligibility can be lost mid-session (e.g. a non-MCB branch gets
+    // added while assembly mode was on) — when that happens, actually
+    // turn the setting off rather than leaving it true-but-unused: the
+    // checkbox shows unchecked (not just disabled), and every downstream
+    // calculation that reads useAssembly directly (box gap/ground-stand/
+    // width overrides below) correctly reverts to standard busbar sizing
+    // instead of silently keeping assembly-mode numbers alive.
+    if (!eligible && useAssembly) useAssembly = false;
     const assembly = eligible && useAssembly ? computeAssembly() : null;
 
     const mainBusbar = computeMainBusbar();
