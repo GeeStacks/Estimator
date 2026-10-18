@@ -330,14 +330,27 @@
   // pricing as every other custom busbar calc, just multiplied by qty.
   function computeBusbarGutterCost() {
     if (!busbarGutter) return null;
-    if (!busbarGutterKey) return { cost: null, busbar: null, length: busbarGutterLength, qty: busbarGutterQty };
+    // 2 insulator supports per busbar, regardless of whether a busbar size
+    // has been picked yet (the quantity of busbars alone determines this).
+    const insulatorCount = busbarGutterQty * 2;
+    const insulatorCost = insulatorCount * insulatorSupportPrice;
+    if (!busbarGutterKey) {
+      return {
+        cost: null, busbar: null, length: busbarGutterLength, qty: busbarGutterQty,
+        insulatorCount, insulatorCost, busbarCost: null,
+      };
+    }
     const [type, atStr] = busbarGutterKey.split("|");
     const at = Number(atStr);
     const busbar = BUSBARS.find((b) => b.type === type && Number(b.at) === at) || null;
     const BAR_LENGTH = 6000;
     const pctOfBar = busbarGutterLength / BAR_LENGTH;
-    const cost = busbar ? pctOfBar * busbar.price * busbarGutterQty : null;
-    return { cost, busbar, length: busbarGutterLength, qty: busbarGutterQty, pctOfBar };
+    const busbarCost = busbar ? pctOfBar * busbar.price * busbarGutterQty : null;
+    const cost = busbarCost !== null ? busbarCost + insulatorCost : null;
+    return {
+      cost, busbar, length: busbarGutterLength, qty: busbarGutterQty, pctOfBar,
+      insulatorCount, insulatorCost, busbarCost,
+    };
   }
 
   // ---- Box dimensioning helpers ----
@@ -1123,6 +1136,7 @@
   let busbarGutterKey = ""; // "type|at" identifying a row in BUSBARS
   let busbarGutterLength = 0; // mm
   let busbarGutterQty = 1;
+  let insulatorSupportPrice = 250; // per-unit price; 2 supports added per busbar
 
   function isTrayOrGutter() {
     return panelType === "Cable Tray" || panelType === "Gutter";
@@ -2381,9 +2395,29 @@
                   el("label", { class: "po-print-field-label" }, ["Busbar size", busbarSelect]),
                   dimInput("Busbar length (mm)", busbarGutterLength, (v) => { busbarGutterLength = v; }),
                   dimInput("Number of busbars", busbarGutterQty, (v) => { busbarGutterQty = Math.max(1, Math.round(v)); }),
+                  dimInput("Insulator support price (each)", insulatorSupportPrice, (v) => { insulatorSupportPrice = v; }),
+                ]),
+                el("div", { class: "busbar-lines", style: "margin-top:8px;" }, [
+                  el("div", { class: "busbar-line" }, [
+                    el("span", {}, ["Insulator supports (2 \u00d7 " + busbarGutterQty + " busbars)"]),
+                    el("span", { class: "mono" }, [
+                      gutterBusbarResult.insulatorCount + " \u00d7 \u20B1" + formatMoney(insulatorSupportPrice) +
+                        " = \u20B1" + formatMoney(gutterBusbarResult.insulatorCost),
+                    ]),
+                  ]),
+                  el("div", { class: "busbar-line" }, [
+                    el("span", {}, ["Busbar cost"]),
+                    el("span", { class: "mono" }, [
+                      !busbarGutterKey
+                        ? "select a busbar size"
+                        : gutterBusbarResult.busbarCost !== null
+                          ? "\u20B1" + formatMoney(gutterBusbarResult.busbarCost)
+                          : "no rate for this selection",
+                    ]),
+                  ]),
                 ]),
                 el("div", { class: "busbar-total", style: "margin-top:8px;" }, [
-                  el("span", {}, ["Busbar gutter cost"]),
+                  el("span", {}, ["Busbar gutter total"]),
                   el("span", { class: "mono" }, [
                     !busbarGutterKey
                       ? "select a busbar size"
@@ -2828,7 +2862,7 @@
       main: { ...main },
       branches: branches.map((b) => ({ ...b })),
       useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar, busbarSourceMode,
-      trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty,
+      trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty, insulatorSupportPrice,
       profitMode, profitValue, discountMode, discountValue,
       mountingType, nemaRating, giGauge, boxPrice,
       mainResolved, branchesResolved,
@@ -2849,6 +2883,7 @@
     busbarGutterKey = config.busbarGutterKey || "";
     busbarGutterLength = config.busbarGutterLength || 0;
     busbarGutterQty = config.busbarGutterQty || 1;
+    insulatorSupportPrice = config.insulatorSupportPrice || 250;
     useAssembly = !!config.useAssembly;
     mainLugMultiplier = config.mainLugMultiplier || 1;
     supplyVoltage = config.supplyVoltage || 230;
