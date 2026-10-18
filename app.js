@@ -324,6 +324,22 @@
     };
   }
 
+  // Busbar gutter: the user picks a specific busbar (by type+AT, from the
+  // same BUSBARS table used everywhere else), a length, and how many of
+  // that busbar the gutter carries — cost uses the same %-of-a-6000mm-bar
+  // pricing as every other custom busbar calc, just multiplied by qty.
+  function computeBusbarGutterCost() {
+    if (!busbarGutter) return null;
+    if (!busbarGutterKey) return { cost: null, busbar: null, length: busbarGutterLength, qty: busbarGutterQty };
+    const [type, atStr] = busbarGutterKey.split("|");
+    const at = Number(atStr);
+    const busbar = BUSBARS.find((b) => b.type === type && Number(b.at) === at) || null;
+    const BAR_LENGTH = 6000;
+    const pctOfBar = busbarGutterLength / BAR_LENGTH;
+    const cost = busbar ? pctOfBar * busbar.price * busbarGutterQty : null;
+    return { cost, busbar, length: busbarGutterLength, qty: busbarGutterQty, pctOfBar };
+  }
+
   // ---- Box dimensioning helpers ----
   // Same-or-next-higher AT match against the clearance table (same
   // round-up convention as busbars/mech lugs).
@@ -737,16 +753,26 @@
     // the natural back/left/right boundaries — simpler welding seams,
     // same idea as splitLengthwise but a fixed 3-way split regardless of
     // how close it already is to fitting.
-    const panelTypes = [
-      { label: "Enclosure base", flatW: (W + 2 * D) + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 1, minSplitParts: 3 },
-      { label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 },
-      // Door / Cover: same footprint as the front face (box width x box
-      // height), not the side footprint.
-      { label: "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 },
-      // Back plate (mounting plate inside the enclosure): sized 3/4 of
-      // the front panel, one per box.
-      { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 },
-    ];
+    const enclosureBaseType = { label: "Enclosure base", flatW: (W + 2 * D) + STEEL_FLANGE_MM * 2, flatH: H + STEEL_FLANGE_MM * 2, qty: 1, minSplitParts: 3 };
+    const topBottomType = { label: "Top / Bottom", flatW: W + STEEL_FLANGE_MM * 2, flatH: D + STEEL_FLANGE_MM * 2, qty: 2 };
+    // Cover / Door-Cover: same footprint as the front face (box width x
+    // box height), not the side footprint. Cable Tray and Gutter use a
+    // single flat Cover instead of a hinged Door, but the size is the same.
+    const coverType = { label: panelType === "Cable Tray" || panelType === "Gutter" ? "Cover" : "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 };
+    // Back plate (mounting plate inside the enclosure): sized 3/4 of
+    // the front panel, one per box.
+    const backPlateType = { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 };
+
+    let panelTypes;
+    if (panelType === "Cable Tray") {
+      // Cable tray: just the folded trough (Enclosure base) and its Cover.
+      panelTypes = [enclosureBaseType, coverType];
+    } else if (panelType === "Gutter") {
+      // Wire gutter: Enclosure base + Cover, plus end/top-bottom covers.
+      panelTypes = [enclosureBaseType, coverType, topBottomType];
+    } else {
+      panelTypes = [enclosureBaseType, topBottomType, coverType, backPlateType];
+    }
 
     const sheetArea = STEEL_SHEET_W * STEEL_SHEET_H;
     const pieces = [];
@@ -1089,6 +1115,18 @@
   let useAssembly = false;
   let mainLugMultiplier = 1;
   let panelType = "MDP";
+  // Cable Tray / Gutter: no breakers, dimensions entered directly.
+  let trayLength = 0;
+  let trayWidth = 0;
+  let trayHeight = 0;
+  let busbarGutter = false; // Gutter-only: whether to add busbars
+  let busbarGutterKey = ""; // "type|at" identifying a row in BUSBARS
+  let busbarGutterLength = 0; // mm
+  let busbarGutterQty = 1;
+
+  function isTrayOrGutter() {
+    return panelType === "Cable Tray" || panelType === "Gutter";
+  }
   let supplyVoltage = 230;
   let needsNeutralBar = false;
   let busbarSourceMode = "custom"; // "custom" (size/AT-based) | "inStock" (branch-count based)
@@ -2060,7 +2098,12 @@
     const neutralBusbar = computeNeutralBusbar(needsNeutralBar);
     if (neutralBusbar.cost !== null) cost += neutralBusbar.cost;
 
-    const boxDimensions = computeBoxDimensions();
+    const busbarGutterCost = computeBusbarGutterCost();
+    if (busbarGutterCost && busbarGutterCost.cost !== null) cost += busbarGutterCost.cost;
+
+    const boxDimensions = isTrayOrGutter()
+      ? { width: trayWidth, height: trayLength, depth: trayHeight, exceedsTable: false }
+      : computeBoxDimensions();
     const steelSheets = computeSteelSheetAllocation(boxDimensions);
 
     const atsMts = computeAtsMtsCost();
@@ -2070,7 +2113,7 @@
 
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
-      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, boxDimensions, steelSheets, atsMts,
+      assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, busbarGutterCost, boxDimensions, steelSheets, atsMts,
       boxPrice,
     };
   }
@@ -2109,9 +2152,13 @@
         onchange: (e) => {
           panelType = e.target.value;
           if (panelType === "ECB") branches = [];
+          if (isTrayOrGutter()) {
+            branches = [];
+            main = emptyRow();
+          }
           render();
         },
-      }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP"].map((opt) =>
+      }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP", "Cable Tray", "Gutter"].map((opt) =>
         el("option", { value: opt, selected: opt === panelType ? "selected" : undefined }, [opt])
       )),
       el("div", { class: "panel-info-right" }, [
@@ -2180,7 +2227,7 @@
         ]),
       ]),
     ]);
-    wrap.appendChild(mainSection);
+    if (!isTrayOrGutter()) wrap.appendChild(mainSection);
 
     // Branch breakers section
     const branchRows = activeBranches().map((row, idx) =>
@@ -2256,7 +2303,101 @@
         ]),
       ]),
     ]);
-    wrap.appendChild(branchSection);
+    if (!isTrayOrGutter()) wrap.appendChild(branchSection);
+
+    // Tray / Gutter dimensions section (replaces breaker selection entirely
+    // for these two panel types — no main, no branches, just L x W x H).
+    if (isTrayOrGutter()) {
+      function dimInput(label, value, onChange) {
+        return el("label", { class: "po-print-field-label" }, [
+          label,
+          el("input", {
+            class: "po-print-input",
+            type: "number",
+            min: "0",
+            value: String(value),
+            oninput: (e) => onChange(parseFloat(e.target.value) || 0),
+            onchange: render,
+          }),
+        ]);
+      }
+
+      const trayFields = [
+        dimInput("Length (mm)", trayLength, (v) => { trayLength = v; }),
+        dimInput("Width (mm)", trayWidth, (v) => { trayWidth = v; }),
+        dimInput("Height (mm)", trayHeight, (v) => { trayHeight = v; }),
+      ];
+
+      const traySection = el("div", { class: "section" }, [
+        el("h2", {}, [panelType + " dimensions"]),
+        el("p", { class: "sub" }, [
+          panelType === "Cable Tray"
+            ? "No breakers for a cable tray \u2014 enter the run's length, width, and height directly."
+            : "No breakers for a gutter \u2014 enter the run's length, width, and height directly.",
+        ]),
+        el("div", { class: "po-letterhead-editor" }, trayFields),
+        panelType === "Gutter"
+          ? el("div", { class: "assembly-toggle", style: "margin-top:10px;" }, [
+              el("label", { class: "assembly-toggle-label" }, [
+                el("input", {
+                  type: "checkbox",
+                  checked: busbarGutter ? "checked" : undefined,
+                  onchange: (e) => {
+                    busbarGutter = e.target.checked;
+                    render();
+                  },
+                }),
+                el("span", {}, ["Busbar gutter (add busbars)"]),
+              ]),
+            ])
+          : null,
+        panelType === "Gutter" && busbarGutter
+          ? (() => {
+              const busbarOptions = [...BUSBARS]
+                .sort((a, b) => (a.type === b.type ? Number(a.at) - Number(b.at) : a.type.localeCompare(b.type)))
+                .map((b) => ({ key: b.type + "|" + b.at, label: b.type + " " + b.at + "A \u2014 \u20B1" + formatMoney(b.price) + "/6000mm" }));
+
+              const busbarSelect = el(
+                "select",
+                {
+                  class: "po-print-input",
+                  onchange: (e) => {
+                    busbarGutterKey = e.target.value;
+                    render();
+                  },
+                },
+                [
+                  el("option", { value: "" }, ["Select a busbar\u2026"]),
+                  ...busbarOptions.map((o) =>
+                    el("option", { value: o.key, selected: busbarGutterKey === o.key ? "selected" : undefined }, [o.label])
+                  ),
+                ]
+              );
+
+              const gutterBusbarResult = computeBusbarGutterCost();
+
+              return el("div", { style: "margin-top:10px;" }, [
+                el("div", { class: "po-letterhead-editor" }, [
+                  el("label", { class: "po-print-field-label" }, ["Busbar size", busbarSelect]),
+                  dimInput("Busbar length (mm)", busbarGutterLength, (v) => { busbarGutterLength = v; }),
+                  dimInput("Number of busbars", busbarGutterQty, (v) => { busbarGutterQty = Math.max(1, Math.round(v)); }),
+                ]),
+                el("div", { class: "busbar-total", style: "margin-top:8px;" }, [
+                  el("span", {}, ["Busbar gutter cost"]),
+                  el("span", { class: "mono" }, [
+                    !busbarGutterKey
+                      ? "select a busbar size"
+                      : gutterBusbarResult.cost !== null
+                        ? "\u20B1" + formatMoney(gutterBusbarResult.cost)
+                        : "no rate for this selection",
+                  ]),
+                ]),
+              ]);
+            })()
+          : null,
+      ]);
+      wrap.appendChild(traySection);
+    }
 
     // Busbars
     const totals = computeTotals();
@@ -2398,9 +2539,11 @@
     // Box dimensions
     const boxSection = el("div", { class: "section" }, [
       el("h2", {}, ["Box dimensions"]),
-      el("p", { class: "sub" }, ["Estimated enclosure length, width, and depth from the main breaker, branches, and clearance table."]),
-      renderBoxDimensionsBlock(totals.boxDimensions),
-      totals.boxDimensions && totals.boxDimensions.exceedsTable
+      isTrayOrGutter()
+        ? el("p", { class: "sub" }, ["Using the length/width/height entered above."])
+        : el("p", { class: "sub" }, ["Estimated enclosure length, width, and depth from the main breaker, branches, and clearance table."]),
+      isTrayOrGutter() ? null : renderBoxDimensionsBlock(totals.boxDimensions),
+      !isTrayOrGutter() && totals.boxDimensions && totals.boxDimensions.exceedsTable
         ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
         : null,
       el("div", { style: "margin-top:14px;" }, [renderSteelSheetBlock(totals.steelSheets)]),
@@ -2685,6 +2828,7 @@
       main: { ...main },
       branches: branches.map((b) => ({ ...b })),
       useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar, busbarSourceMode,
+      trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty,
       profitMode, profitValue, discountMode, discountValue,
       mountingType, nemaRating, giGauge, boxPrice,
       mainResolved, branchesResolved,
@@ -2697,7 +2841,14 @@
     if (!config) return;
     main = { ...config.main };
     panelType = config.panelType || "MDP";
-    branches = panelType === "ECB" ? [] : config.branches.map((b) => ({ ...b }));
+    branches = panelType === "ECB" || isTrayOrGutter() ? [] : config.branches.map((b) => ({ ...b }));
+    trayLength = config.trayLength || 0;
+    trayWidth = config.trayWidth || 0;
+    trayHeight = config.trayHeight || 0;
+    busbarGutter = !!config.busbarGutter;
+    busbarGutterKey = config.busbarGutterKey || "";
+    busbarGutterLength = config.busbarGutterLength || 0;
+    busbarGutterQty = config.busbarGutterQty || 1;
     useAssembly = !!config.useAssembly;
     mainLugMultiplier = config.mainLugMultiplier || 1;
     supplyVoltage = config.supplyVoltage || 230;
