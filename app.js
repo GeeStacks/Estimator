@@ -771,10 +771,14 @@
     // Cover / Door-Cover: same footprint as the front face (box width x
     // box height), not the side footprint. Cable Tray and Gutter use a
     // single flat Cover instead of a hinged Door, but the size is the same.
-    const coverType = { label: panelType === "Cable Tray" || panelType === "Gutter" ? "Cover" : "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 };
-    // Back plate (mounting plate inside the enclosure): sized 3/4 of
-    // the front panel, one per box.
-    const backPlateType = { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 };
+    const coverType = { label: isTrayOrGutter() ? "Cover" : "Door / Cover", flatW: frontFlatW, flatH: frontFlatH, qty: 1 };
+    // Back plate (mounting plate inside the enclosure). Normal panels:
+    // sized 3/4 of the front panel. Pull Box: sized to the Cover's own
+    // length/width minus 25mm each (so it sits just inside the cover),
+    // not the 3/4 rule.
+    const backPlateType = panelType === "Pull Box"
+      ? { label: "Back plate", flatW: frontFlatW - 25, flatH: frontFlatH - 25, qty: 1 }
+      : { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 };
 
     let panelTypes;
     if (panelType === "Cable Tray") {
@@ -783,6 +787,9 @@
     } else if (panelType === "Gutter") {
       // Wire gutter: Enclosure base + Cover, plus end/top-bottom covers.
       panelTypes = [enclosureBaseType, coverType, topBottomType];
+    } else if (panelType === "Pull Box") {
+      // Pull box: same as Gutter, plus a Back plate.
+      panelTypes = [enclosureBaseType, coverType, topBottomType, backPlateType];
     } else {
       panelTypes = [enclosureBaseType, topBottomType, coverType, backPlateType];
     }
@@ -1139,7 +1146,7 @@
   let insulatorSupportPrice = 250; // per-unit price; 2 supports added per busbar
 
   function isTrayOrGutter() {
-    return panelType === "Cable Tray" || panelType === "Gutter";
+    return panelType === "Cable Tray" || panelType === "Gutter" || panelType === "Pull Box";
   }
   let supplyVoltage = 230;
   let needsNeutralBar = false;
@@ -2172,7 +2179,7 @@
           }
           render();
         },
-      }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP", "Cable Tray", "Gutter"].map((opt) =>
+      }, ["MDP", "ECB", "MTS/ MTS MDP", "ATS/ATS MDP", "Cable Tray", "Gutter", "Pull Box"].map((opt) =>
         el("option", { value: opt, selected: opt === panelType ? "selected" : undefined }, [opt])
       )),
       el("div", { class: "panel-info-right" }, [
@@ -2345,12 +2352,10 @@
       const traySection = el("div", { class: "section" }, [
         el("h2", {}, [panelType + " dimensions"]),
         el("p", { class: "sub" }, [
-          panelType === "Cable Tray"
-            ? "No breakers for a cable tray \u2014 enter the run's length, width, and height directly."
-            : "No breakers for a gutter \u2014 enter the run's length, width, and height directly.",
+          "No breakers for a " + panelType.toLowerCase() + " \u2014 enter the run's length, width, and height directly.",
         ]),
         el("div", { class: "po-letterhead-editor" }, trayFields),
-        panelType === "Gutter"
+        panelType === "Gutter" || panelType === "Pull Box"
           ? el("div", { class: "assembly-toggle", style: "margin-top:10px;" }, [
               el("label", { class: "assembly-toggle-label" }, [
                 el("input", {
@@ -2361,11 +2366,11 @@
                     render();
                   },
                 }),
-                el("span", {}, ["Busbar gutter (add busbars)"]),
+                el("span", {}, ["Add busbars"]),
               ]),
             ])
           : null,
-        panelType === "Gutter" && busbarGutter
+        (panelType === "Gutter" || panelType === "Pull Box") && busbarGutter
           ? (() => {
               const busbarOptions = [...BUSBARS]
                 .sort((a, b) => (a.type === b.type ? Number(a.at) - Number(b.at) : a.type.localeCompare(b.type)))
