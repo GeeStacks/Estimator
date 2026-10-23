@@ -857,6 +857,17 @@
     const totalSheets = packResult.sheetCount; // actual packed count — what the diagram draws
     const totalSheetsWithSafety = totalSheets > 0 ? totalSheets + 1 : 0; // +1 safety margin, display only
 
+    // Box price from material area, not sheet count: sum every piece's
+    // own flat area (skipping rows that exceed a sheet even after
+    // splitting, same as the diagram/packing already do), pad it for
+    // cutting/scrap loss, then price it as a fraction of one sheet
+    // against the user's per-sheet rate.
+    const rawAreaTotal = rows.reduce((sum, r) => sum + (r.exceedsSheet ? 0 : r.flatW * r.flatH * r.qty), 0);
+    const lossFactor = 1 + (materialLossPct || 0) / 100;
+    const adjustedAreaTotal = rawAreaTotal * lossFactor;
+    const areaFractionOfSheet = adjustedAreaTotal / sheetArea;
+    const computedBoxPrice = areaFractionOfSheet * steelSheetPrice;
+
     return {
       rows,
       totalSheets,
@@ -867,6 +878,12 @@
       flange: STEEL_FLANGE_MM,
       kerf: STEEL_KERF_MM,
       placements: packResult.placements,
+      rawAreaTotal,
+      materialLossPct,
+      adjustedAreaTotal,
+      areaFractionOfSheet,
+      steelSheetPrice,
+      computedBoxPrice,
     };
   }
 
@@ -1162,6 +1179,8 @@
   let poItemName = "PANEL BOARD";
   let poSaveMessage = "";
   let boxPrice = 0;
+  let steelSheetPrice = 0; // user-entered price per full 2440x1220 sheet
+  let materialLossPct = 20; // 15-25% typical range for cutting/scrap loss
 
   function updateSelection(row, field, value) {
     const next = { ...row, [field]: value };
@@ -2034,6 +2053,77 @@
     ]);
   }
 
+  // Box price from steel sheet material: sum of all nested pieces' own
+  // areas (padded for cutting/scrap loss), as a fraction of one sheet,
+  // priced against a user-entered per-sheet rate. A separate, optional
+  // calculation from the manual "Box price" field above it — this is a
+  // suggestion the user can copy in, not an automatic override.
+  function renderBoxPricingBlock(data) {
+    return el("div", { class: "card", style: "margin-top:14px;" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Box price from steel sheet"]),
+        el("div", { class: "po-letterhead-editor" }, [
+          el("label", { class: "po-print-field-label" }, [
+            "Steel sheet price (per " + data.sheetW + "\u00d7" + data.sheetH + " sheet)",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(steelSheetPrice),
+              oninput: (e) => { steelSheetPrice = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
+          el("label", { class: "po-print-field-label" }, [
+            "Material loss % (typically 15\u201325%)",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(materialLossPct),
+              oninput: (e) => { materialLossPct = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
+        ]),
+        el("div", { class: "busbar-lines", style: "margin-top:8px;" }, [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Total piece area (raw)"]),
+            el("span", { class: "mono" }, [formatMoney(data.rawAreaTotal / 1000000) + " m\u00b2"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Total piece area (+" + data.materialLossPct + "% loss)"]),
+            el("span", { class: "mono" }, [formatMoney(data.adjustedAreaTotal / 1000000) + " m\u00b2"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Share of one sheet"]),
+            el("span", { class: "mono" }, [(data.areaFractionOfSheet * 100).toFixed(1) + "%"]),
+          ]),
+        ]),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Computed box price"]),
+          el("span", { class: "mono" }, [
+            steelSheetPrice > 0 ? "\u20B1" + formatMoney(data.computedBoxPrice) : "enter a steel sheet price",
+          ]),
+        ]),
+        steelSheetPrice > 0
+          ? el(
+              "button",
+              {
+                class: "toolbar-btn",
+                style: "margin-top:8px;",
+                onclick: () => {
+                  boxPrice = data.computedBoxPrice;
+                  render();
+                },
+              },
+              ["Use this as Box price"]
+            )
+          : null,
+      ]),
+    ]);
+  }
+
   function trashIcon() {
     const span = el("span", { html: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path></svg>' }, []);
     return span;
@@ -2586,6 +2676,7 @@
         ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
         : null,
       el("div", { style: "margin-top:14px;" }, [renderSteelSheetBlock(totals.steelSheets)]),
+      totals.steelSheets ? renderBoxPricingBlock(totals.steelSheets) : null,
       el("div", { class: "po-save-row", style: "margin-top:14px;" }, [
         el("label", { class: "receipt-adjust-label", style: "flex:0 0 auto;" }, ["Box price"]),
         el("input", {
@@ -2869,7 +2960,7 @@
       useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar, busbarSourceMode,
       trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty, insulatorSupportPrice,
       profitMode, profitValue, discountMode, discountValue,
-      mountingType, nemaRating, giGauge, boxPrice,
+      mountingType, nemaRating, giGauge, boxPrice, steelSheetPrice, materialLossPct,
       mainResolved, branchesResolved,
       supplyDescriptionText: supplyDescription(supplyVoltage, mainResolved ? mainResolved.poles : null),
       grandTotal: receipt.grandTotal,
@@ -2903,6 +2994,8 @@
     nemaRating = config.nemaRating || "NEMA-1";
     giGauge = config.giGauge || "16";
     boxPrice = config.boxPrice || 0;
+    steelSheetPrice = config.steelSheetPrice || 0;
+    materialLossPct = config.materialLossPct || 20;
     poSaveMessage = "";
     render();
   };
