@@ -887,6 +887,32 @@
     };
   }
 
+  // Laser cut cost: an inferred stand-in formula, (W+H+D) x rate — not a
+  // validated physical cutting-length model. Blank/null until all three
+  // box dimensions exist.
+  function computeLaserCutCost(boxDimensions) {
+    if (!boxDimensions || boxDimensions.width == null || boxDimensions.height == null || boxDimensions.depth == null) return null;
+    const combined = boxDimensions.width + boxDimensions.height + boxDimensions.depth;
+    return combined * laserRate;
+  }
+
+  // Powder coating cost: surface area (the same "actual parts" area used
+  // for steel sheet pricing, in m^2) x rate, rounded to 2 decimals.
+  function computePowderCoatingCost(steelSheets) {
+    if (!steelSheets) return null;
+    const areaM2 = steelSheets.rawAreaTotal / 1000000;
+    return Math.round(areaM2 * powderCoatRate * 100) / 100;
+  }
+
+  // Labor cost: per-enclosure flat rate by default; blank until the
+  // required dimensions exist (mirrors the other two costs above). A
+  // per-hour mode is also supported (hours x hourly rate) for later.
+  function computeLaborCost(boxDimensions) {
+    if (!boxDimensions || boxDimensions.width == null || boxDimensions.height == null || boxDimensions.depth == null) return null;
+    if (laborMode === "perHour") return laborHours * laborRatePerHour;
+    return laborRatePerUnit;
+  }
+
   // Busbar cuts needed for a group of N identical breakers, each with
   // `poles` phases. Pairing shares one cut per phase between 2 breakers;
   // an odd one out still needs its own cut per phase.
@@ -1181,6 +1207,25 @@
   let boxPrice = 0;
   let steelSheetPrice = 0; // user-entered price per full 2440x1220 sheet
   let materialLossPct = 20; // 15-25% typical range for cutting/scrap loss
+
+  // Laser cut cost: (W + H + D) x rate. This is an inferred stand-in for
+  // an actual cutting-length model — not a validated physical formula.
+  // Swap it out once real cutting perimeter, hole count, piercing time,
+  // or machine time figures become available.
+  let laserRate = 0.168; // php per mm of combined W+H+D
+
+  // Powder coating cost: surface area (m^2) x rate. Surface area reuses
+  // the same "actual parts" area already computed for steel sheet
+  // pricing (rawAreaTotal), so the coating basis matches what's really
+  // being fabricated and coated, not a generic box-surface estimate.
+  let powderCoatRate = 300; // php per m^2
+
+  // Labor cost: flat per-enclosure rate by default. laborMode can switch
+  // to "perHour" (hours x hourly rate) once that's wanted instead.
+  let laborMode = "perUnit"; // "perUnit" | "perHour"
+  let laborRatePerUnit = 150; // php per enclosure
+  let laborHours = 0;
+  let laborRatePerHour = 0;
 
   function updateSelection(row, field, value) {
     const next = { ...row, [field]: value };
@@ -2124,6 +2169,134 @@
     ]);
   }
 
+  function renderFabricationCostsBlock(totals) {
+    const haveDims = totals.laserCutCost !== null;
+
+    const laserRow = el("div", { class: "busbar-block" }, [
+      el("div", { class: "busbar-block-title" }, ["Laser cut cost"]),
+      el("p", { class: "sub", style: "margin:0 0 8px;" }, [
+        "Inferred formula \u2014 (Width + Height + Depth) \u00d7 rate. Not a validated cutting-length model; replace with real cutting perimeter, hole count, piercing time, or machine time once available.",
+      ]),
+      el("div", { class: "po-letterhead-editor" }, [
+        el("label", { class: "po-print-field-label" }, [
+          "Laser rate (php/mm of W+H+D)",
+          el("input", {
+            class: "po-print-input",
+            type: "number",
+            min: "0",
+            step: "0.001",
+            value: String(laserRate),
+            oninput: (e) => { laserRate = parseFloat(e.target.value) || 0; },
+            onchange: render,
+          }),
+        ]),
+      ]),
+      el("div", { class: "busbar-total" }, [
+        el("span", {}, ["Laser cut cost"]),
+        el("span", { class: "mono" }, [
+          haveDims ? "\u20B1" + formatMoney(totals.laserCutCost) : "enter dimensions first",
+        ]),
+      ]),
+    ]);
+
+    const powderRow = el("div", { class: "busbar-block" }, [
+      el("div", { class: "busbar-block-title" }, ["Powder coating cost"]),
+      el("div", { class: "po-letterhead-editor" }, [
+        el("label", { class: "po-print-field-label" }, [
+          "Powder coating rate (php/m\u00b2)",
+          el("input", {
+            class: "po-print-input",
+            type: "number",
+            min: "0",
+            value: String(powderCoatRate),
+            oninput: (e) => { powderCoatRate = parseFloat(e.target.value) || 0; },
+            onchange: render,
+          }),
+        ]),
+      ]),
+      el("div", { class: "busbar-total" }, [
+        el("span", {}, ["Powder coating cost"]),
+        el("span", { class: "mono" }, [
+          totals.powderCoatingCost !== null ? "\u20B1" + formatMoney(totals.powderCoatingCost) : "enter dimensions first",
+        ]),
+      ]),
+    ]);
+
+    const laborModeToggle = el("div", { class: "assembly-toggle" }, [
+      el("label", { class: "assembly-toggle-label" }, [
+        el("input", {
+          type: "radio",
+          name: "labor-mode",
+          checked: laborMode === "perUnit" ? "checked" : undefined,
+          onchange: () => { laborMode = "perUnit"; render(); },
+        }),
+        el("span", {}, ["Per enclosure"]),
+      ]),
+      el("label", { class: "assembly-toggle-label" }, [
+        el("input", {
+          type: "radio",
+          name: "labor-mode",
+          checked: laborMode === "perHour" ? "checked" : undefined,
+          onchange: () => { laborMode = "perHour"; render(); },
+        }),
+        el("span", {}, ["Per hour (fabrication hours \u00d7 hourly rate)"]),
+      ]),
+    ]);
+
+    const laborInputs = laborMode === "perUnit"
+      ? [
+          el("label", { class: "po-print-field-label" }, [
+            "Labor cost per enclosure (php)",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(laborRatePerUnit),
+              oninput: (e) => { laborRatePerUnit = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
+        ]
+      : [
+          el("label", { class: "po-print-field-label" }, [
+            "Fabrication hours",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(laborHours),
+              oninput: (e) => { laborHours = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
+          el("label", { class: "po-print-field-label" }, [
+            "Hourly labor rate (php/hr)",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(laborRatePerHour),
+              oninput: (e) => { laborRatePerHour = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
+        ];
+
+    const laborRow = el("div", { class: "busbar-block" }, [
+      el("div", { class: "busbar-block-title" }, ["Labor cost"]),
+      laborModeToggle,
+      el("div", { class: "po-letterhead-editor", style: "margin-top:8px;" }, laborInputs),
+      el("div", { class: "busbar-total" }, [
+        el("span", {}, ["Labor cost"]),
+        el("span", { class: "mono" }, [
+          totals.laborCost !== null ? "\u20B1" + formatMoney(totals.laborCost) : "enter dimensions first",
+        ]),
+      ]),
+    ]);
+
+    return el("div", { class: "card", style: "margin-top:14px;" }, [laserRow, powderRow, laborRow]);
+  }
+
   function trashIcon() {
     const span = el("span", { html: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path></svg>' }, []);
     return span;
@@ -2217,6 +2390,15 @@
       : computeBoxDimensions();
     const steelSheets = computeSteelSheetAllocation(boxDimensions);
 
+    const laserCutCost = computeLaserCutCost(boxDimensions);
+    if (laserCutCost !== null) cost += laserCutCost;
+
+    const powderCoatingCost = computePowderCoatingCost(steelSheets);
+    if (powderCoatingCost !== null) cost += powderCoatingCost;
+
+    const laborCost = computeLaborCost(boxDimensions);
+    if (laborCost !== null) cost += laborCost;
+
     const atsMts = computeAtsMtsCost();
     if (atsMts && atsMts.cost) cost += atsMts.cost;
 
@@ -2225,6 +2407,7 @@
     return {
       cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
       assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, busbarGutterCost, boxDimensions, steelSheets, atsMts,
+      laserCutCost, powderCoatingCost, laborCost,
       boxPrice,
     };
   }
@@ -2677,6 +2860,7 @@
         : null,
       el("div", { style: "margin-top:14px;" }, [renderSteelSheetBlock(totals.steelSheets)]),
       totals.steelSheets ? renderBoxPricingBlock(totals.steelSheets) : null,
+      renderFabricationCostsBlock(totals),
       el("div", { class: "po-save-row", style: "margin-top:14px;" }, [
         el("label", { class: "receipt-adjust-label", style: "flex:0 0 auto;" }, ["Box price"]),
         el("input", {
@@ -2961,6 +3145,7 @@
       trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty, insulatorSupportPrice,
       profitMode, profitValue, discountMode, discountValue,
       mountingType, nemaRating, giGauge, boxPrice, steelSheetPrice, materialLossPct,
+      laserRate, powderCoatRate, laborMode, laborRatePerUnit, laborHours, laborRatePerHour,
       mainResolved, branchesResolved,
       supplyDescriptionText: supplyDescription(supplyVoltage, mainResolved ? mainResolved.poles : null),
       grandTotal: receipt.grandTotal,
@@ -2995,6 +3180,12 @@
     giGauge = config.giGauge || "16";
     boxPrice = config.boxPrice || 0;
     steelSheetPrice = config.steelSheetPrice || 0;
+    laserRate = config.laserRate !== undefined ? config.laserRate : 0.168;
+    powderCoatRate = config.powderCoatRate !== undefined ? config.powderCoatRate : 300;
+    laborMode = config.laborMode || "perUnit";
+    laborRatePerUnit = config.laborRatePerUnit !== undefined ? config.laborRatePerUnit : 150;
+    laborHours = config.laborHours || 0;
+    laborRatePerHour = config.laborRatePerHour || 0;
     materialLossPct = config.materialLossPct || 20;
     poSaveMessage = "";
     render();
