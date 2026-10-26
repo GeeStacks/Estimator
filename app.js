@@ -2103,124 +2103,133 @@
   // priced against a user-entered per-sheet rate. A separate, optional
   // calculation from the manual "Box price" field above it — this is a
   // suggestion the user can copy in, not an automatic override.
-  function renderBoxPricingBlock(data) {
-    return el("div", { class: "card", style: "margin-top:14px;" }, [
-      el("div", { class: "busbar-block" }, [
-        el("div", { class: "busbar-block-title" }, ["Box price from steel sheet"]),
+  // Box price (from steel sheet material) + laser cut + powder coating +
+  // labor, all under one card with a single busbar-block-title — each
+  // cost gets its own lighter sub-heading (busbar-subtitle) rather than
+  // a separate titled block.
+  function renderCostingBlock(totals) {
+    const data = totals.steelSheets;
+    const sections = [];
+
+    if (data) {
+      sections.push(
+        el("div", {}, [
+          el("div", { class: "busbar-subtitle" }, ["Box price from steel sheet"]),
+          el("div", { class: "po-letterhead-editor" }, [
+            el("label", { class: "po-print-field-label" }, [
+              "Steel sheet price (per " + data.sheetW + "\u00d7" + data.sheetH + " sheet)",
+              el("input", {
+                class: "po-print-input",
+                type: "number",
+                min: "0",
+                value: String(steelSheetPrice),
+                oninput: (e) => { steelSheetPrice = parseFloat(e.target.value) || 0; },
+                onchange: render,
+              }),
+            ]),
+            el("label", { class: "po-print-field-label" }, [
+              "Material loss % (typically 15\u201325%)",
+              el("input", {
+                class: "po-print-input",
+                type: "number",
+                min: "0",
+                value: String(materialLossPct),
+                oninput: (e) => { materialLossPct = parseFloat(e.target.value) || 0; },
+                onchange: render,
+              }),
+            ]),
+          ]),
+          el("div", { class: "busbar-lines", style: "margin-top:8px;" }, [
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Total piece area (raw)"]),
+              el("span", { class: "mono" }, [formatMoney(data.rawAreaTotal / 1000000) + " m\u00b2"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Total piece area (+" + data.materialLossPct + "% loss)"]),
+              el("span", { class: "mono" }, [formatMoney(data.adjustedAreaTotal / 1000000) + " m\u00b2"]),
+            ]),
+            el("div", { class: "busbar-line" }, [
+              el("span", {}, ["Share of one sheet"]),
+              el("span", { class: "mono" }, [(data.areaFractionOfSheet * 100).toFixed(1) + "%"]),
+            ]),
+          ]),
+          el("div", { class: "busbar-total" }, [
+            el("span", {}, ["Computed box price"]),
+            el("span", { class: "mono" }, [
+              steelSheetPrice > 0 ? "\u20B1" + formatMoney(data.computedBoxPrice) : "enter a steel sheet price",
+            ]),
+          ]),
+          steelSheetPrice > 0
+            ? el(
+                "button",
+                {
+                  class: "toolbar-btn",
+                  style: "margin-top:8px;",
+                  onclick: () => {
+                    boxPrice = data.computedBoxPrice;
+                    render();
+                  },
+                },
+                ["Use this as Box price"]
+              )
+            : null,
+        ])
+      );
+    }
+
+    sections.push(
+      el("div", { style: "margin-top:16px;" }, [
+        el("div", { class: "busbar-subtitle" }, ["Laser cut cost"]),
+        el("p", { class: "sub", style: "margin:0 0 8px;" }, [
+          "Inferred formula \u2014 (Width + Height + Depth) \u00d7 rate. Not a validated cutting-length model; replace with real cutting perimeter, hole count, piercing time, or machine time once available.",
+        ]),
         el("div", { class: "po-letterhead-editor" }, [
           el("label", { class: "po-print-field-label" }, [
-            "Steel sheet price (per " + data.sheetW + "\u00d7" + data.sheetH + " sheet)",
+            "Laser rate (php/mm of W+H+D)",
             el("input", {
               class: "po-print-input",
               type: "number",
               min: "0",
-              value: String(steelSheetPrice),
-              oninput: (e) => { steelSheetPrice = parseFloat(e.target.value) || 0; },
+              step: "0.001",
+              value: String(laserRate),
+              oninput: (e) => { laserRate = parseFloat(e.target.value) || 0; },
               onchange: render,
             }),
-          ]),
-          el("label", { class: "po-print-field-label" }, [
-            "Material loss % (typically 15\u201325%)",
-            el("input", {
-              class: "po-print-input",
-              type: "number",
-              min: "0",
-              value: String(materialLossPct),
-              oninput: (e) => { materialLossPct = parseFloat(e.target.value) || 0; },
-              onchange: render,
-            }),
-          ]),
-        ]),
-        el("div", { class: "busbar-lines", style: "margin-top:8px;" }, [
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Total piece area (raw)"]),
-            el("span", { class: "mono" }, [formatMoney(data.rawAreaTotal / 1000000) + " m\u00b2"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Total piece area (+" + data.materialLossPct + "% loss)"]),
-            el("span", { class: "mono" }, [formatMoney(data.adjustedAreaTotal / 1000000) + " m\u00b2"]),
-          ]),
-          el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Share of one sheet"]),
-            el("span", { class: "mono" }, [(data.areaFractionOfSheet * 100).toFixed(1) + "%"]),
           ]),
         ]),
         el("div", { class: "busbar-total" }, [
-          el("span", {}, ["Computed box price"]),
+          el("span", {}, ["Laser cut cost"]),
           el("span", { class: "mono" }, [
-            steelSheetPrice > 0 ? "\u20B1" + formatMoney(data.computedBoxPrice) : "enter a steel sheet price",
+            totals.laserCutCost !== null ? "\u20B1" + formatMoney(totals.laserCutCost) : "enter dimensions first",
           ]),
         ]),
-        steelSheetPrice > 0
-          ? el(
-              "button",
-              {
-                class: "toolbar-btn",
-                style: "margin-top:8px;",
-                onclick: () => {
-                  boxPrice = data.computedBoxPrice;
-                  render();
-                },
-              },
-              ["Use this as Box price"]
-            )
-          : null,
-      ]),
-    ]);
-  }
+      ])
+    );
 
-  function renderFabricationCostsBlock(totals) {
-    const haveDims = totals.laserCutCost !== null;
-
-    const laserRow = el("div", { class: "busbar-block" }, [
-      el("div", { class: "busbar-block-title" }, ["Laser cut cost"]),
-      el("p", { class: "sub", style: "margin:0 0 8px;" }, [
-        "Inferred formula \u2014 (Width + Height + Depth) \u00d7 rate. Not a validated cutting-length model; replace with real cutting perimeter, hole count, piercing time, or machine time once available.",
-      ]),
-      el("div", { class: "po-letterhead-editor" }, [
-        el("label", { class: "po-print-field-label" }, [
-          "Laser rate (php/mm of W+H+D)",
-          el("input", {
-            class: "po-print-input",
-            type: "number",
-            min: "0",
-            step: "0.001",
-            value: String(laserRate),
-            oninput: (e) => { laserRate = parseFloat(e.target.value) || 0; },
-            onchange: render,
-          }),
+    sections.push(
+      el("div", { style: "margin-top:16px;" }, [
+        el("div", { class: "busbar-subtitle" }, ["Powder coating cost"]),
+        el("div", { class: "po-letterhead-editor" }, [
+          el("label", { class: "po-print-field-label" }, [
+            "Powder coating rate (php/m\u00b2)",
+            el("input", {
+              class: "po-print-input",
+              type: "number",
+              min: "0",
+              value: String(powderCoatRate),
+              oninput: (e) => { powderCoatRate = parseFloat(e.target.value) || 0; },
+              onchange: render,
+            }),
+          ]),
         ]),
-      ]),
-      el("div", { class: "busbar-total" }, [
-        el("span", {}, ["Laser cut cost"]),
-        el("span", { class: "mono" }, [
-          haveDims ? "\u20B1" + formatMoney(totals.laserCutCost) : "enter dimensions first",
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Powder coating cost"]),
+          el("span", { class: "mono" }, [
+            totals.powderCoatingCost !== null ? "\u20B1" + formatMoney(totals.powderCoatingCost) : "enter dimensions first",
+          ]),
         ]),
-      ]),
-    ]);
-
-    const powderRow = el("div", { class: "busbar-block" }, [
-      el("div", { class: "busbar-block-title" }, ["Powder coating cost"]),
-      el("div", { class: "po-letterhead-editor" }, [
-        el("label", { class: "po-print-field-label" }, [
-          "Powder coating rate (php/m\u00b2)",
-          el("input", {
-            class: "po-print-input",
-            type: "number",
-            min: "0",
-            value: String(powderCoatRate),
-            oninput: (e) => { powderCoatRate = parseFloat(e.target.value) || 0; },
-            onchange: render,
-          }),
-        ]),
-      ]),
-      el("div", { class: "busbar-total" }, [
-        el("span", {}, ["Powder coating cost"]),
-        el("span", { class: "mono" }, [
-          totals.powderCoatingCost !== null ? "\u20B1" + formatMoney(totals.powderCoatingCost) : "enter dimensions first",
-        ]),
-      ]),
-    ]);
+      ])
+    );
 
     const laborModeToggle = el("div", { class: "assembly-toggle" }, [
       el("label", { class: "assembly-toggle-label" }, [
@@ -2282,19 +2291,26 @@
           ]),
         ];
 
-    const laborRow = el("div", { class: "busbar-block" }, [
-      el("div", { class: "busbar-block-title" }, ["Labor cost"]),
-      laborModeToggle,
-      el("div", { class: "po-letterhead-editor", style: "margin-top:8px;" }, laborInputs),
-      el("div", { class: "busbar-total" }, [
-        el("span", {}, ["Labor cost"]),
-        el("span", { class: "mono" }, [
-          totals.laborCost !== null ? "\u20B1" + formatMoney(totals.laborCost) : "enter dimensions first",
+    sections.push(
+      el("div", { style: "margin-top:16px;" }, [
+        el("div", { class: "busbar-subtitle" }, ["Labor cost"]),
+        laborModeToggle,
+        el("div", { class: "po-letterhead-editor", style: "margin-top:8px;" }, laborInputs),
+        el("div", { class: "busbar-total" }, [
+          el("span", {}, ["Labor cost"]),
+          el("span", { class: "mono" }, [
+            totals.laborCost !== null ? "\u20B1" + formatMoney(totals.laborCost) : "enter dimensions first",
+          ]),
         ]),
+      ])
+    );
+
+    return el("div", { class: "card", style: "margin-top:14px;" }, [
+      el("div", { class: "busbar-block" }, [
+        el("div", { class: "busbar-block-title" }, ["Box & fabrication pricing"]),
+        ...sections,
       ]),
     ]);
-
-    return el("div", { class: "card", style: "margin-top:14px;" }, [laserRow, powderRow, laborRow]);
   }
 
   function trashIcon() {
@@ -2859,8 +2875,7 @@
         ? el("div", { class: "warn" }, ["Main or branch AT exceeds the clearance table \u2014 needs a manual quote."])
         : null,
       el("div", { style: "margin-top:14px;" }, [renderSteelSheetBlock(totals.steelSheets)]),
-      totals.steelSheets ? renderBoxPricingBlock(totals.steelSheets) : null,
-      renderFabricationCostsBlock(totals),
+      renderCostingBlock(totals),
       el("div", { class: "po-save-row", style: "margin-top:14px;" }, [
         el("label", { class: "receipt-adjust-label", style: "flex:0 0 auto;" }, ["Box price"]),
         el("input", {
