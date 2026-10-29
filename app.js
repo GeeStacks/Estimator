@@ -2305,7 +2305,7 @@
       ])
     );
 
-    return el("div", { class: "card", style: "margin-top:14px;" }, [
+    return el("div", { class: "card costing-compact", style: "margin-top:14px;" }, [
       el("div", { class: "busbar-block" }, [
         el("div", { class: "busbar-block-title" }, ["Box & fabrication pricing"]),
         ...sections,
