@@ -557,6 +557,10 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   padding: 24px 22px;
   font-family: var(--font-data);
 }
+.costing-compact {
+  max-width: 420px;
+  margin: 0 auto;
+}
 .receipt-title {
   font-family: var(--font-ui);
   font-size: 13px;
