@@ -66,6 +66,32 @@
       ],
       blank: { name: "", value: 0 },
     },
+    box_pricing: {
+      label: "Box pricing",
+      fields: [
+        { key: "panel_type", label: "Box type", type: "text" },
+        { key: "material_loss_pct", label: "Material loss %", type: "number" },
+        { key: "laser_mode", label: "Laser mode (rate/flat)", type: "text" },
+        { key: "laser_rate", label: "Laser rate (₱/mm)", type: "number" },
+        { key: "laser_flat", label: "Laser flat (₱)", type: "number" },
+        { key: "powder_mode", label: "Powder mode (rate/flat)", type: "text" },
+        { key: "powder_rate", label: "Powder rate (₱/m²)", type: "number" },
+        { key: "powder_flat", label: "Powder flat (₱)", type: "number" },
+        { key: "labor_mode", label: "Labor mode (perUnit/perHour)", type: "text" },
+        { key: "labor_rate_per_unit", label: "Labor per unit (₱)", type: "number" },
+        { key: "labor_hours", label: "Labor hours", type: "number" },
+        { key: "labor_rate_per_hour", label: "Labor per hour (₱)", type: "number" },
+        { key: "other_price", label: "Other (₱)", type: "number" },
+        { key: "safety_factor", label: "Safety factor (×)", type: "number" },
+      ],
+      blank: {
+        panel_type: "MDP", material_loss_pct: 20,
+        laser_mode: "rate", laser_rate: 0.168, laser_flat: 0,
+        powder_mode: "rate", powder_rate: 300, powder_flat: 0,
+        labor_mode: "perUnit", labor_rate_per_unit: 150, labor_hours: 0, labor_rate_per_hour: 0,
+        other_price: 0, safety_factor: 1.2,
+      },
+    },
     clearance: {
       label: "Clearance",
       fields: [
@@ -128,7 +154,7 @@
 
   const TABLE_ORDER = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions", "ats_mts", "grounding_busbars",
+    "box_pricing", "clearance", "lug_dimensions", "ats_mts", "grounding_busbars",
   ];
 
   let activeTable = "breakers";
@@ -136,6 +162,16 @@
   let editMode = false;
 
   const root = document.getElementById("admin-app");
+
+  function refreshBuilder(forcePricingDefaults) {
+    if (forcePricingDefaults || activeTable === "box_pricing") {
+      if (window.refreshBoxPricingDefaults) {
+        window.refreshBoxPricingDefaults();
+        return;
+      }
+    }
+    if (window.renderBuilder) window.renderBuilder();
+  }
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -234,7 +270,7 @@
           const text = await file.text();
           const data = JSON.parse(text);
           await DBops.importAll(data);
-          if (window.renderBuilder) window.renderBuilder();
+          refreshBuilder(true);
           render();
           window.alert("Import complete. Imported data is now the live data and the new baseline for \u201cReset table\u201d.");
         } catch (err) {
@@ -306,7 +342,7 @@
             class: "add-btn",
             onclick: async () => {
               await DBops.addRow(activeTable, { ...schema.blank });
-              if (window.renderBuilder) window.renderBuilder();
+              refreshBuilder();
               render();
             },
           },
@@ -321,7 +357,7 @@
             onclick: async () => {
               if (window.confirm("Reset " + schema.label + " to its last-imported (or original) baseline? This discards edits to this table.")) {
                 await DBops.resetTable(activeTable);
-                if (window.renderBuilder) window.renderBuilder();
+                refreshBuilder();
                 render();
               }
             },
@@ -374,7 +410,7 @@
         onchange: async (e) => {
           if (!editMode) return;
           await DBops.updateRow(activeTable, row.id, { [f.key]: coerce(f.type, e.target.value) });
-          if (window.renderBuilder) window.renderBuilder();
+          refreshBuilder();
         },
       });
       return el("td", {}, [input]);
@@ -387,7 +423,7 @@
           class: "remove-btn",
           onclick: async () => {
             await DBops.deleteRow(activeTable, row.id);
-            if (window.renderBuilder) window.renderBuilder();
+            refreshBuilder();
             render();
           },
         },

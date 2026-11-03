@@ -1,6 +1,63 @@
 (function () {
   const FIELD_ORDER = ["brand", "at", "poles", "model"];
   const BUSBAR_SAFETY_FACTOR = 1.2;
+  const DEFAULT_STEEL_SHEET_PRICE = 1800;
+  const DEFAULT_BOX_SAFETY_FACTOR = 1.2;
+  const BOX_SAFETY_FACTOR_STORAGE_KEY = "box_safety_factor";
+
+  function boxSafetyFactorStorageKey(type) {
+    return BOX_SAFETY_FACTOR_STORAGE_KEY + "_" + encodeURIComponent(type);
+  }
+
+  function loadBoxSafetyFactor(type, defaultFactor) {
+    try {
+      const storageKey = boxSafetyFactorStorageKey(type);
+      let saved = localStorage.getItem(storageKey);
+      if (saved === null && type === "MDP") {
+        saved = localStorage.getItem(BOX_SAFETY_FACTOR_STORAGE_KEY);
+        if (saved !== null) {
+          saved = JSON.stringify({ value: Number(saved), defaultFactor });
+          localStorage.setItem(storageKey, saved);
+          localStorage.removeItem(BOX_SAFETY_FACTOR_STORAGE_KEY);
+        }
+      }
+      if (saved === null) return defaultFactor;
+      let parsed;
+      try {
+        parsed = JSON.parse(saved);
+      } catch (error) {
+        parsed = saved;
+      }
+      if (parsed && typeof parsed === "object" && parsed.defaultFactor !== defaultFactor) {
+        localStorage.removeItem(storageKey);
+        return defaultFactor;
+      }
+      const factor = Number(parsed && typeof parsed === "object" ? parsed.value : parsed);
+      if ((!parsed || typeof parsed !== "object") && factor === DEFAULT_BOX_SAFETY_FACTOR) {
+        localStorage.removeItem(storageKey);
+        return defaultFactor;
+      }
+      if (Number.isFinite(factor) && factor >= 1) return factor;
+      console.error("Stored box safety factor is invalid; using the box type default.", saved);
+      return defaultFactor;
+    } catch (error) {
+      console.error("Unable to load box safety factor.", error);
+      return defaultFactor;
+    }
+  }
+
+  function saveBoxSafetyFactor() {
+    try {
+      const defaults = BOX_PRICING.find((row) => row.panel_type === panelType);
+      const defaultFactor = defaults ? Number(defaults.safety_factor) : DEFAULT_BOX_SAFETY_FACTOR;
+      localStorage.setItem(
+        boxSafetyFactorStorageKey(panelType),
+        JSON.stringify({ value: boxSafetyFactor, defaultFactor })
+      );
+    } catch (error) {
+      console.error("Unable to save box safety factor.", error);
+    }
+  }
 
   // ---- Busbar helpers ----
   function sortedBusbarsForType(type) {
@@ -1194,6 +1251,34 @@
   function isTrayOrGutter() {
     return panelType === "Cable Tray" || panelType === "Gutter" || panelType === "Pull Box";
   }
+
+  function applyBoxPricingDefaults(type) {
+    const defaults = BOX_PRICING.find((row) => row.panel_type === type);
+    if (!defaults) {
+      console.error("No box pricing defaults found for box type.", type);
+      return;
+    }
+
+    function numberOr(value, fallback) {
+      const number = Number(value);
+      return Number.isFinite(number) && number >= 0 ? number : fallback;
+    }
+
+    materialLossPct = numberOr(defaults.material_loss_pct, 20);
+    laserMode = defaults.laser_mode === "flat" ? "flat" : "rate";
+    laserRate = numberOr(defaults.laser_rate, 0.168);
+    laserFlat = numberOr(defaults.laser_flat, 0);
+    powderMode = defaults.powder_mode === "flat" ? "flat" : "rate";
+    powderCoatRate = numberOr(defaults.powder_rate, 300);
+    powderFlat = numberOr(defaults.powder_flat, 0);
+    laborMode = defaults.labor_mode === "perHour" ? "perHour" : "perUnit";
+    laborRatePerUnit = numberOr(defaults.labor_rate_per_unit, 150);
+    laborHours = numberOr(defaults.labor_hours, 0);
+    laborRatePerHour = numberOr(defaults.labor_rate_per_hour, 0);
+    boxPrice = numberOr(defaults.other_price, 0);
+    boxSafetyFactor = loadBoxSafetyFactor(type, numberOr(defaults.safety_factor, DEFAULT_BOX_SAFETY_FACTOR));
+  }
+
   let supplyVoltage = 230;
   let needsNeutralBar = false;
   let busbarSourceMode = "custom"; // "custom" (size/AT-based) | "inStock" (branch-count based)
@@ -1208,7 +1293,8 @@
   let poItemName = "PANEL BOARD";
   let poSaveMessage = "";
   let boxPrice = 0;
-  let steelSheetPrice = 0; // user-entered price per full 2440x1220 sheet
+  let boxSafetyFactor = DEFAULT_BOX_SAFETY_FACTOR;
+  let steelSheetPrice = DEFAULT_STEEL_SHEET_PRICE; // user-editable price per full 2440x1220 sheet
   let materialLossPct = 20; // 15-25% typical range for cutting/scrap loss
 
   // Laser cut cost: (W + H + D) x rate. This is an inferred stand-in for
@@ -2151,6 +2237,29 @@
       });
     }
 
+    function safetyFactorInput() {
+      return el("input", {
+        type: "number",
+        class: "receipt-adjust-input",
+        min: "1",
+        step: "0.01",
+        required: "required",
+        value: String(boxSafetyFactor),
+        onchange: (e) => {
+          e.target.setCustomValidity("");
+          const value = Number(e.target.value);
+          if (!e.target.validity.valid || !Number.isFinite(value) || value < 1) {
+            e.target.setCustomValidity("Enter a safety factor of 1 or greater.");
+            e.target.reportValidity();
+            return;
+          }
+          boxSafetyFactor = value;
+          saveBoxSafetyFactor();
+          render();
+        },
+      });
+    }
+
     function row(label, controls, amount) {
       return el("div", { class: "receipt-adjust-row" }, [
         el("span", { class: "receipt-adjust-label" }, [label]),
@@ -2210,6 +2319,7 @@
         ? row("Labor hours", [numInput(laborHours, (v) => { laborHours = v; })], "")
         : null,
       row("Other", [numInput(boxPrice, (v) => { boxPrice = v; })], money(boxPrice || null)),
+      row("Safety factor (×)", [safetyFactorInput()], "Applied to box subtotal"),
     ];
 
     return el("div", { class: "card receipt costing-compact", style: "margin-top:14px;" }, [
@@ -2323,8 +2433,9 @@
     // Box price = steel sheet material + laser + powder coating + labor
     // + any manual "other" amount, summed once (not added line by line
     // elsewhere, so nothing double counts).
-    const boxPriceTotal =
+    const boxPriceSubtotal =
       (materialCost || 0) + (laserCutCost || 0) + (powderCoatingCost || 0) + (laborCost || 0) + boxPrice;
+    const boxPriceTotal = boxPriceSubtotal * boxSafetyFactor;
     cost += boxPriceTotal;
 
     const atsMts = computeAtsMtsCost();
@@ -2335,6 +2446,7 @@
       assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, busbarGutterCost, boxDimensions, steelSheets, atsMts,
       laserCutCost, powderCoatingCost, laborCost, materialCost,
       boxPrice: boxPriceTotal,
+      boxSafetyFactor,
       boxOtherPrice: boxPrice,
     };
   }
@@ -2372,6 +2484,7 @@
         class: "panel-info-select",
         onchange: (e) => {
           panelType = e.target.value;
+          applyBoxPricingDefaults(panelType);
           if (panelType === "ECB") branches = [];
           if (isTrayOrGutter()) {
             branches = [];
@@ -3042,8 +3155,15 @@
     return span;
   }
 
-  window.DBReady.then(render);
+  window.DBReady.then(() => {
+    applyBoxPricingDefaults(panelType);
+    render();
+  });
   window.renderBuilder = render;
+  window.refreshBoxPricingDefaults = function () {
+    applyBoxPricingDefaults(panelType);
+    render();
+  };
 
   // ---- PO tool bridge ----
   // Snapshot everything the PO page needs to build a description + price,
@@ -3060,6 +3180,7 @@
       trayLength, trayWidth, trayHeight, busbarGutter, busbarGutterKey, busbarGutterLength, busbarGutterQty, insulatorSupportPrice,
       profitMode, profitValue, discountMode, discountValue,
       mountingType, nemaRating, giGauge, boxPrice, steelSheetPrice, materialLossPct,
+      boxSafetyFactor,
       laserRate, laserMode, laserFlat, powderCoatRate, powderMode, powderFlat, laborMode, laborRatePerUnit, laborHours, laborRatePerHour,
       mainResolved, branchesResolved,
       supplyDescriptionText: supplyDescription(supplyVoltage, mainResolved ? mainResolved.poles : null),
@@ -3071,6 +3192,7 @@
     if (!config) return;
     main = { ...config.main };
     panelType = config.panelType || "MDP";
+    applyBoxPricingDefaults(panelType);
     branches = panelType === "ECB" || isTrayOrGutter() ? [] : config.branches.map((b) => ({ ...b }));
     trayLength = config.trayLength || 0;
     trayWidth = config.trayWidth || 0;
@@ -3093,19 +3215,29 @@
     mountingType = config.mountingType || "SURFACE MOUNTED";
     nemaRating = config.nemaRating || "NEMA-1";
     giGauge = config.giGauge || "16";
-    boxPrice = config.boxPrice || 0;
-    steelSheetPrice = config.steelSheetPrice || 0;
-    laserRate = config.laserRate !== undefined ? config.laserRate : 0.168;
-    powderCoatRate = config.powderCoatRate !== undefined ? config.powderCoatRate : 300;
-    laserMode = config.laserMode || "rate";
-    laserFlat = config.laserFlat || 0;
-    powderMode = config.powderMode || "rate";
-    powderFlat = config.powderFlat || 0;
-    laborMode = config.laborMode || "perUnit";
-    laborRatePerUnit = config.laborRatePerUnit !== undefined ? config.laborRatePerUnit : 150;
-    laborHours = config.laborHours || 0;
-    laborRatePerHour = config.laborRatePerHour || 0;
-    materialLossPct = config.materialLossPct || 20;
+    if (config.boxPrice !== undefined) boxPrice = config.boxPrice;
+    if (config.boxSafetyFactor !== undefined) {
+      const factor = Number(config.boxSafetyFactor);
+      if (Number.isFinite(factor) && factor >= 1) {
+        boxSafetyFactor = factor;
+        saveBoxSafetyFactor();
+      } else {
+        console.error("Unable to load quotation: invalid box safety factor.", config.boxSafetyFactor);
+      }
+    }
+    steelSheetPrice =
+      config.steelSheetPrice !== undefined ? config.steelSheetPrice : DEFAULT_STEEL_SHEET_PRICE;
+    if (config.laserRate !== undefined) laserRate = config.laserRate;
+    if (config.powderCoatRate !== undefined) powderCoatRate = config.powderCoatRate;
+    if (config.laserMode !== undefined) laserMode = config.laserMode === "flat" ? "flat" : "rate";
+    if (config.laserFlat !== undefined) laserFlat = config.laserFlat;
+    if (config.powderMode !== undefined) powderMode = config.powderMode === "flat" ? "flat" : "rate";
+    if (config.powderFlat !== undefined) powderFlat = config.powderFlat;
+    if (config.laborMode !== undefined) laborMode = config.laborMode === "perHour" ? "perHour" : "perUnit";
+    if (config.laborRatePerUnit !== undefined) laborRatePerUnit = config.laborRatePerUnit;
+    if (config.laborHours !== undefined) laborHours = config.laborHours;
+    if (config.laborRatePerHour !== undefined) laborRatePerHour = config.laborRatePerHour;
+    if (config.materialLossPct !== undefined) materialLossPct = config.materialLossPct;
     poSaveMessage = "";
     render();
   };

@@ -7,7 +7,7 @@
 
   const TABLE_NAMES = [
     "breakers", "mech_lugs", "busbars", "assemblies_2p", "assemblies_3p", "constants",
-    "clearance", "lug_dimensions", "ats_mts", "grounding_busbars",
+    "clearance", "lug_dimensions", "ats_mts", "grounding_busbars", "box_pricing",
   ];
 
   function hardcodedSeedFor(name) {
@@ -32,6 +32,8 @@
         return SEED_ATS_MTS.map((r, i) => ({ id: i + 1, ...r }));
       case "grounding_busbars":
         return SEED_GROUNDING_BUSBARS.map((r, i) => ({ id: i + 1, ...r }));
+      case "box_pricing":
+        return BOX_PRICING.map((r, i) => ({ id: i + 1, ...r }));
       default:
         return [];
     }
@@ -124,6 +126,7 @@
     replaceArrayContents(LUG_DIMENSIONS, DB.lug_dimensions.map(stripId));
     replaceArrayContents(ATS_MTS, DB.ats_mts.map(stripId));
     replaceArrayContents(GROUNDING_BUSBARS, DB.grounding_busbars.map(stripId));
+    replaceArrayContents(BOX_PRICING, DB.box_pricing.map(stripId));
     Object.keys(CONSTANTS).forEach((k) => delete CONSTANTS[k]);
     DB.constants.forEach((c) => { CONSTANTS[c.name] = c.value; });
   }
@@ -150,12 +153,28 @@
   function healConstants(rows) {
     const known = new Set(rows.map((r) => r.name));
     let changed = false;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i].name).startsWith("box_price_")) {
+        rows.splice(i, 1);
+        changed = true;
+      }
+    }
     Object.entries(CONSTANTS).forEach(([name, value]) => {
       if (!known.has(name)) {
         rows.push({ id: nextId(rows), name, value });
         known.add(name);
         changed = true;
       }
+    });
+    return changed;
+  }
+
+  function healBoxPricing(rows) {
+    let changed = false;
+    BOX_PRICING.forEach((defaultRow) => {
+      if (rows.some((row) => row.panel_type === defaultRow.panel_type)) return;
+      rows.push({ id: nextId(rows), ...defaultRow });
+      changed = true;
     });
     return changed;
   }
@@ -247,6 +266,7 @@
       } else {
         const seedChanged =
           (name === "constants" && healConstants(seed)) ||
+          (name === "box_pricing" && healBoxPricing(seed)) ||
           (name === "mech_lugs" && healMechLugCatalog(seed)) ||
           (name === "lug_dimensions" && healLugRelativeMmsq(seed)) ||
           (name === "busbars" && normalizeBusbars(seed));
@@ -259,6 +279,7 @@
       } else {
         const liveChanged =
           (name === "constants" && healConstants(live)) ||
+          (name === "box_pricing" && healBoxPricing(live)) ||
           (name === "mech_lugs" && healMechLugCatalog(live)) ||
           (name === "lug_dimensions" && healLugRelativeMmsq(live)) ||
           (name === "busbars" && normalizeBusbars(live));
@@ -328,6 +349,7 @@
         if (!Array.isArray(data[name])) continue;
         const rows = data[name].map((r, i) => ({ id: i + 1, ...r }));
         if (name === "busbars") normalizeBusbars(rows);
+        if (name === "box_pricing") healBoxPricing(rows);
         DB[name] = rows;
         await idbPut(idbHandle, SEEDS_STORE, name, rows.map((r) => ({ ...r })));
         await idbPut(idbHandle, TABLES_STORE, name, rows);
