@@ -596,6 +596,7 @@
       heightSideA, heightSideB, heightSideBEntry,
       groundStand, backplateClearance, clearanceRow,
       mainWidth: mainData.width, height, width, depth,
+      assemblyMode: useAssembly,
       firstBranch, secondBranch, side1, side2,
       exceedsTable:
         !clearanceRow ||
@@ -1878,7 +1879,18 @@
         el("div", { class: "busbar-lines" }, heightLines),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
-        el("div", { class: "busbar-lines" }, [
+        data.assemblyMode
+          ? el("div", { class: "busbar-lines" }, [
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Assembly width (fixed)"]),
+                el("span", { class: "mono" }, ["400mm"]),
+              ]),
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Width subtotal"]),
+                el("span", { class: "mono" }, [Math.round(data.width) + "mm"]),
+              ]),
+            ])
+          : el("div", { class: "busbar-lines" }, [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main width"]),
             el("span", { class: "mono" }, [data.mainWidth + "mm"]),
