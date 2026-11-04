@@ -1,6 +1,4 @@
-// Recommended wire/lug size & bending clearance, by main breaker AT.
-// mgl_cat_no links each row to a catalog entry in SEED_LUG_DIMENSIONS.
-// parallel_count is 2 for AT ratings that use two conductors/lugs per phase.
+
 const SEED_CLEARANCE = [
   { at: 100, wire_size: "35 mm\u00b2 Cu", lug_size_label: "35 mm\u00b2 (~1/0 AWG)", bending_clearance_mm: 75, parallel_count: 1, mgl_cat_no: "MGL-A0" },
   { at: 125, wire_size: "50 mm\u00b2 Cu", lug_size_label: "50 mm\u00b2 (~1/0 AWG)", bending_clearance_mm: 100, parallel_count: 1, mgl_cat_no: "MGL-A0" },

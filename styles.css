@@ -485,13 +485,63 @@ table.breaker-table td.num { text-align: right; }
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
-.admin-toolbar input[type="text"] {
+.admin-toolbar input[type="text"],
+.admin-toolbar select {
   flex: 1;
   min-width: 160px;
   border: 1px solid var(--border-input);
   padding: 8px 10px;
   font-size: 14px;
   background: var(--white);
+}
+.admin-value-filter {
+  position: relative;
+  min-width: 150px;
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  font-size: 13px;
+}
+.admin-value-filter summary {
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style-position: inside;
+  white-space: nowrap;
+}
+.admin-value-menu {
+  position: absolute;
+  z-index: 5;
+  top: 100%;
+  left: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(320px, 85vw);
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border-input);
+  background: var(--white);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.admin-value-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.admin-value-option:hover { background: var(--panel); }
+.admin-value-option input { margin: 0; }
+.admin-value-actions {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.admin-value-action {
+  flex: 1;
+  border: 0;
+  padding: 5px 6px;
+  background: var(--panel);
+  cursor: pointer;
 }
 .reset-btn, .admin-toolbar .add-btn {
   border: 1px solid var(--border-input);
@@ -516,6 +566,17 @@ table.admin-table thead th {
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
+table.admin-table .admin-sort-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+table.admin-table .admin-sort-btn:hover,
+table.admin-table .admin-sort-btn:focus-visible { color: var(--ink); }
 table.admin-table thead th.narrow { width: 36px; }
 table.admin-table tbody tr { border-top: 1px solid var(--line); }
 table.admin-table td { padding: 4px; }
@@ -1169,7 +1230,8 @@ table.po-print-table pre {
 }
 
 @media print {
-  body * { visibility: hidden; }
+  body * { visibility: hidden; 
+  }
   .print-only, .print-only * { visibility: visible; }
   .print-only {
     display: block;

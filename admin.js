@@ -159,6 +159,10 @@
 
   let activeTable = "breakers";
   let filterText = "";
+  let filterField = "all";
+  let valueFilters = {};
+  let sortKey = "";
+  let sortDirection = "asc";
   let editMode = false;
 
   const root = document.getElementById("admin-app");
@@ -197,10 +201,22 @@
     return raw;
   }
 
-  function matchesFilter(row, text) {
+  function matchesFilter(row, text, fieldKey, fields) {
     if (!text) return true;
     const needle = text.toLowerCase();
-    return Object.values(row).some((v) => String(v).toLowerCase().includes(needle));
+    const values = fieldKey === "all" ? fields.map((field) => row[field.key]) : [row[fieldKey]];
+    return values.some((value) => String(value ?? "").toLowerCase().includes(needle));
+  }
+
+  function compareRows(a, b, field) {
+    const aValue = a[field.key];
+    const bValue = b[field.key];
+    const aEmpty = aValue === null || aValue === undefined || aValue === "";
+    const bEmpty = bValue === null || bValue === undefined || bValue === "";
+    if (aEmpty || bEmpty) return aEmpty === bEmpty ? 0 : aEmpty ? 1 : -1;
+
+    if (field.type === "number") return Number(aValue) - Number(bValue);
+    return String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: "base" });
   }
 
   function downloadJSON(obj, filename) {
@@ -216,12 +232,38 @@
   }
 
   async function render() {
-    const hadFocus = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.role === "filter";
-    const caret = hadFocus ? document.activeElement.selectionStart : null;
+    const activeElement = document.activeElement;
+    const focusRole = activeElement && activeElement.dataset && activeElement.dataset.role;
+    const caret = focusRole === "filter" ? activeElement.selectionStart : null;
+    const focusedValueIndex = focusRole === "value-filter" ? activeElement.dataset.index : null;
+    const valuesMenuOpen = !!root.querySelector(".admin-value-filter[open]");
 
     root.innerHTML = "";
     const schema = SCHEMAS[activeTable];
-    const rows = DBops.getTable(activeTable).filter((r) => matchesFilter(r, filterText));
+    const tableRows = DBops.getTable(activeTable);
+    const activeValueFilter = valueFilters[activeTable + ":" + filterField];
+    const rows = tableRows
+      .filter((row) => matchesFilter(row, filterText, filterField, schema.fields))
+      .filter((row) => {
+        if (!activeValueFilter) return true;
+        const values = filterField === "all"
+          ? schema.fields.map((field) => String(row[field.key] ?? ""))
+          : [String(row[filterField] ?? "")];
+        return values.some((value) => activeValueFilter.has(value));
+      });
+    if (sortKey) {
+      const sortField = schema.fields.find((field) => field.key === sortKey);
+      if (sortField) {
+        rows.sort((a, b) => {
+          const result = compareRows(a, b, sortField);
+          const aValue = a[sortField.key];
+          const bValue = b[sortField.key];
+          const hasEmptyValue = aValue === null || aValue === undefined || aValue === ""
+            || bValue === null || bValue === undefined || bValue === "";
+          return sortDirection === "asc" || hasEmptyValue ? result : -result;
+        });
+      }
+    }
 
     const wrap = el("div", { class: "wrap" }, []);
 
@@ -313,6 +355,10 @@
             onclick: () => {
               activeTable = name;
               filterText = "";
+              filterField = "all";
+              valueFilters = {};
+              sortKey = "";
+              sortDirection = "asc";
               render();
             },
           },
@@ -333,7 +379,73 @@
         render();
       },
     });
-    const toolbarChildren = [filterInput];
+    const filterSelect = el("select", {
+      "data-role": "filter-field",
+      "aria-label": "Filter column",
+      onchange: (e) => {
+        filterField = e.target.value;
+        render();
+      },
+    }, [
+      el("option", { value: "all" }, ["All columns"]),
+      ...schema.fields.map((field) => el("option", { value: field.key }, [field.label])),
+    ]);
+    filterSelect.value = filterField;
+
+    const valueKey = activeTable + ":" + filterField;
+    const uniqueValues = Array.from(new Set(tableRows.flatMap((row) =>
+      filterField === "all"
+        ? schema.fields.map((field) => String(row[field.key] ?? ""))
+        : [String(row[filterField] ?? "")]
+    ))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    const selectedValues = valueFilters[valueKey];
+    const valueOptions = uniqueValues.map((value, index) => {
+      const checkbox = el("input", {
+        type: "checkbox",
+        "data-role": "value-filter",
+        "data-index": String(index),
+        checked: !selectedValues || selectedValues.has(value) ? "checked" : undefined,
+        onchange: (e) => {
+          const next = new Set(valueFilters[valueKey] || uniqueValues);
+          if (e.target.checked) next.add(value);
+          else next.delete(value);
+          if (next.size === uniqueValues.length) delete valueFilters[valueKey];
+          else valueFilters[valueKey] = next;
+          render();
+        },
+      });
+      return el("label", { class: "admin-value-option" }, [
+        checkbox,
+        el("span", {}, [value || "(Blanks)"]),
+      ]);
+    });
+    const valueFilterMenu = el("details", { class: "admin-value-filter" }, [
+      el("summary", {}, [
+        "Values (" + (selectedValues ? selectedValues.size + " selected" : "All selected") + ")",
+      ]),
+      el("div", { class: "admin-value-menu" }, [
+        el("div", { class: "admin-value-actions" }, [
+          el("button", {
+            type: "button",
+            class: "admin-value-action",
+            onclick: () => {
+              delete valueFilters[valueKey];
+              render();
+            },
+          }, ["Select all"]),
+          el("button", {
+            type: "button",
+            class: "admin-value-action",
+            onclick: () => {
+              valueFilters[valueKey] = new Set();
+              render();
+            },
+          }, ["Clear all"]),
+        ]),
+        ...valueOptions,
+      ]),
+    ]);
+    const toolbarChildren = [filterInput, filterSelect, valueFilterMenu];
     if (editMode) {
       toolbarChildren.push(
         el(
@@ -374,7 +486,25 @@
         el(
           "tr",
           {},
-          schema.fields.map((f) => el("th", {}, [f.label])).concat(editMode ? [el("th", { class: "narrow" }, [""])] : [])
+          schema.fields.map((field) => {
+            const isSorted = sortKey === field.key;
+            const direction = isSorted ? sortDirection : "asc";
+            return el("th", { "aria-sort": isSorted ? (direction === "asc" ? "ascending" : "descending") : "none" }, [
+              el("button", {
+                type: "button",
+                class: "admin-sort-btn",
+                "aria-label": "Sort by " + field.label + (isSorted ? (direction === "asc" ? ", ascending" : ", descending") : ""),
+                onclick: () => {
+                  if (sortKey === field.key) sortDirection = sortDirection === "asc" ? "desc" : "asc";
+                  else {
+                    sortKey = field.key;
+                    sortDirection = "asc";
+                  }
+                  render();
+                },
+              }, [field.label + (isSorted ? (direction === "asc" ? " \u25B2" : " \u25BC") : "")])
+            ]);
+          }).concat(editMode ? [el("th", { class: "narrow" }, [""])] : [])
         ),
       ]),
       el(
@@ -384,7 +514,7 @@
           ? rows.map((row) => renderRow(row, schema))
           : [
               el("tr", {}, [
-                el("td", { colspan: String(schema.fields.length + 1), class: "empty-state" }, ["No rows."]),
+                el("td", { colspan: String(schema.fields.length + (editMode ? 1 : 0)), class: "empty-state" }, ["No rows match the current filters."]),
               ]),
             ]
       ),
@@ -392,11 +522,15 @@
     wrap.appendChild(el("div", { class: "card admin-card" }, [table]));
 
     root.appendChild(wrap);
-    if (hadFocus) {
-      const newInput = root.querySelector('[data-role="filter"]');
-      if (newInput) {
-        newInput.focus();
-        newInput.setSelectionRange(caret, caret);
+    if (valuesMenuOpen) root.querySelector(".admin-value-filter").open = true;
+    if (focusRole) {
+      const selector = focusRole === "value-filter"
+        ? '[data-role="value-filter"][data-index="' + focusedValueIndex + '"]'
+        : '[data-role="' + focusRole + '"]';
+      const newElement = root.querySelector(selector);
+      if (newElement) {
+        newElement.focus();
+        if (focusRole === "filter" && typeof caret === "number") newElement.setSelectionRange(caret, caret);
       }
     }
   }

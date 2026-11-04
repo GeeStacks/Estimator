@@ -411,8 +411,49 @@
   }
 
   // ---- Box dimensioning helpers ----
-  // Same-or-next-higher AT match against the clearance table (same
-  // round-up convention as busbars/mech lugs).
+  // Match breaker type first, then round the selected rating (AT or frame)
+  // up; only supported pole counts can resolve a table width.
+  function lookupPanelBoxDimensions(dimensions, type, rating, poles, ratingField) {
+    const typeRows = dimensions.filter((r) => r.type === type);
+    if (!typeRows.length) return null;
+
+    const bracketField = ratingField || "at";
+    let row = null;
+    if (type === "MCB") {
+      row = typeRows.find((r) => r[bracketField] === null) || null;
+    } else {
+      const sorted = typeRows.sort((a, b) => Number(a[bracketField]) - Number(b[bracketField]));
+      row = sorted.find((r) => Number(rating) <= Number(r[bracketField]));
+    }
+
+    if (!row) return null;
+    const widthKey = Number(poles) === 2 ? "width_2_pole" : Number(poles) === 3 ? "width_3_pole" : null;
+    return widthKey && row[widthKey] != null ? { ...row, width: row[widthKey] } : null;
+  }
+
+  function lookupEcbBoxDimensions(breaker) {
+    let row = null;
+    if (breaker.type === "MCB") {
+      row = ECB_BOX_DIMENSIONS.find((r) => r.type === "MCB" && r.frame === null) || null;
+    } else if (breaker.type === "MCCB") {
+      const modelData = BREAKERS.find(
+        (r) => r.type === "MCCB" && r.brand === breaker.brand && r.model === breaker.model
+      );
+      if (!modelData || modelData.frame == null || !Number.isFinite(Number(modelData.frame))) return null;
+
+      const frame = Number(modelData.frame);
+      const sorted = ECB_BOX_DIMENSIONS
+        .filter((r) => r.type === "MCCB")
+        .sort((a, b) => Number(a.frame) - Number(b.frame));
+      row = sorted.find((r) => frame <= Number(r.frame)) || null;
+    }
+
+    if (!row) return null;
+    const widthKey =
+      Number(breaker.poles) === 2 ? "width_2_pole" : Number(breaker.poles) === 3 ? "width_3_pole" : null;
+    return widthKey && row[widthKey] != null ? { ...row, width: row[widthKey] } : null;
+  }
+
   function lookupClearance(at) {
     const sorted = [...CLEARANCE].sort((a, b) => Number(a.at) - Number(b.at));
     const idx = sorted.findIndex((r) => Number(at) <= Number(r.at));
@@ -560,11 +601,24 @@
     }));
 
     const isEcb = panelType === "ECB";
-    const height =
-      mainClearance !== null && mainLugFactor !== null
-        ? isEcb
-          ? mainClearance + mainLugFactor + mainHeight + mainLugFactor + mainClearance
-          : mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
+    const isAts = panelType === "ATS/ATS MDP";
+    const isMts = panelType === "MTS/ MTS MDP";
+    const ecbBoxSize = isEcb
+      ? lookupEcbBoxDimensions(mainData)
+      : null;
+    const panelBoxSize = isAts || isMts
+      ? lookupPanelBoxDimensions(
+          isAts ? ATS_BOX_DIMENSIONS : MTS_BOX_DIMENSIONS,
+          mainData.type,
+          mainData.frame,
+          mainData.poles,
+          "frame"
+        )
+      : null;
+    const height = isEcb || isAts || isMts
+      ? (isEcb ? (ecbBoxSize ? ecbBoxSize.three_piece_length : null) : (panelBoxSize ? panelBoxSize.length : null))
+      : mainClearance !== null && mainLugFactor !== null
+        ? mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
         : null;
 
     // ---- First/Second branch: which branches set each side's lug
@@ -635,30 +689,35 @@
     const heightSideBEntry = secondBranch && secondBranch.rawQty > 1 ? secondBranch : null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
-    const width = useAssembly
-      ? 400
-      : sidesResolved
-        ? mainData.width + heightSideA + heightSideB +
-          (side1.lugFactor + side1.sideClearance) +
-          (side2.lugFactor + side2.sideClearance)
-        : null;
+    const width = isEcb || isAts || isMts
+      ? (isEcb ? (ecbBoxSize ? ecbBoxSize.width : null) : (panelBoxSize ? panelBoxSize.width : null))
+      : useAssembly
+        ? 400
+        : sidesResolved
+          ? mainData.width + heightSideA + heightSideB +
+            (side1.lugFactor + side1.sideClearance) +
+            (side2.lugFactor + side2.sideClearance)
+          : null;
 
     // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
-    const depth = mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
+    const depth = isEcb || isAts || isMts
+      ? (isEcb ? (ecbBoxSize ? ecbBoxSize.depth : null) : (panelBoxSize ? panelBoxSize.depth : null))
+      : mainData.at >= 800 ? 250 : mainData.at >= 315 ? 200 : 150;
 
     return {
       mainClearance, mainLugFactor, mainHeight, gap, branchBlockHeight, branchRows, branchQty, branchWidth,
-      isEcb,
+      isEcb, isAts, isMts, panelBoxSize,
       branchBreakdown,
       heightSideA, heightSideB, heightSideBEntry,
       groundStand, backplateClearance, clearanceRow,
       mainWidth: mainData.width, height, width, depth,
       assemblyMode: useAssembly,
       firstBranch, secondBranch, side1, side2,
-      exceedsTable:
-        !clearanceRow ||
-        (mainData.type !== "MCB" && !mainLugRow) ||
-        (!useAssembly && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
+      exceedsTable: isEcb || isAts || isMts
+        ? (isEcb ? !ecbBoxSize : !panelBoxSize)
+        : !clearanceRow ||
+          (mainData.type !== "MCB" && !mainLugRow) ||
+          (!useAssembly && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
     };
   }
 
@@ -724,9 +783,9 @@
   // first piece's own column. Among every free rectangle a piece fits,
   // the leftmost one is used (tie-broken topmost) to keep the overall
   // fill order left-to-right, matching how the CNC sweeps the sheet.
-  function packSheets(pieces, sheetW, sheetH, kerf) {
+ function packSheets(pieces, sheetW, sheetH, kerf) {
     if (pieces.length === 0) return { sheetCount: 0, placements: [] };
-    const sorted = [...pieces].sort((a, b) => b.w - a.w);
+    const sorted = [...pieces].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
     const sheets = []; // each: array of free rects { x, y, w, h }
     const placements = [];
 
@@ -741,30 +800,40 @@
       }
     }
 
-    function place(piece) {
+    // Tries to place a piece (with specific w and h) into existing sheets
+    function tryPlaceWithDimensions(pieceW, pieceH, label) {
       for (let si = 0; si < sheets.length; si++) {
         const freeRects = sheets[si];
         let bestIdx = -1;
         for (let i = 0; i < freeRects.length; i++) {
           const r = freeRects[i];
-          if (piece.w > r.w || piece.h > r.h) continue;
+          if (pieceW > r.w || pieceH > r.h) continue;
           if (bestIdx === -1 || r.x < freeRects[bestIdx].x || (r.x === freeRects[bestIdx].x && r.y < freeRects[bestIdx].y)) {
             bestIdx = i;
           }
         }
         if (bestIdx !== -1) {
           const rect = freeRects[bestIdx];
-          placements.push({ sheet: si, x: rect.x, y: rect.y, w: piece.w, h: piece.h, label: piece.label });
+          placements.push({ sheet: si, x: rect.x, y: rect.y, w: pieceW, h: pieceH, label });
           freeRects.splice(bestIdx, 1);
-          splitFreeRect(freeRects, rect, piece);
+          splitFreeRect(freeRects, rect, { w: pieceW, h: pieceH });
           return true;
         }
       }
       return false;
     }
 
-    sorted.forEach((piece) => {
-      if (!place(piece)) {
+   sorted.forEach((piece) => {
+      // 1. Try placing in normal orientation on existing sheets
+      let placed = tryPlaceWithDimensions(piece.w, piece.h, piece.label);
+
+      // 2. If it didn't fit, try rotating 90 degrees on existing sheets
+      if (!placed) {
+        placed = tryPlaceWithDimensions(piece.h, piece.w, piece.label + " (Rotated)");
+      }
+
+      // 3. If it still doesn't fit anywhere, open a new sheet in normal orientation
+      if (!placed) {
         const freeRects = [{ x: 0, y: 0, w: sheetW, h: sheetH }];
         sheets.push(freeRects);
         const rect = freeRects[0];
@@ -777,23 +846,23 @@
     return { sheetCount: sheets.length, placements };
   }
 
-  function computeSteelSheetAllocation(boxData) {
+function computeSteelSheetAllocation(boxData) {
     if (!boxData || boxData.width === null || boxData.height === null || boxData.depth === null) return null;
-
+ 
     const W = boxData.width;
     const H = boxData.height;
     const D = boxData.depth;
-
+ 
     // Front/back/door footprint: box width x box height, plus flange.
     const frontFlatW = W + STEEL_FLANGE_MM * 2;
     const frontFlatH = H + STEEL_FLANGE_MM * 2;
-
+ 
     function fitsSheetEitherWay(flatW, flatH) {
       const fitsNormal = flatW <= STEEL_SHEET_W && flatH <= STEEL_SHEET_H;
       const fitsRotated = flatH <= STEEL_SHEET_W && flatW <= STEEL_SHEET_H;
       return fitsNormal || fitsRotated;
     }
-
+ 
     // When a flat panel doesn't fit a sheet on its own, cut it lengthwise
     // into N equal strips instead of excluding it: the longer dimension
     // is divided into N equal segments, and the shorter dimension stays
@@ -814,7 +883,7 @@
       }
       return null;
     }
-
+ 
     // Enclosure base: back + left + right sides, bent from one flat
     // sheet into a U-shaped shell — flat pattern unfolds to (left depth
     // + back width + right depth) wide by the box height tall, as a
@@ -837,7 +906,7 @@
     const backPlateType = panelType === "Pull Box"
       ? { label: "Back plate", flatW: frontFlatW - 25, flatH: frontFlatH - 25, qty: 1 }
       : { label: "Back plate", flatW: frontFlatW * 0.75, flatH: frontFlatH * 0.75, qty: 1 };
-
+ 
     let panelTypes;
     if (panelType === "Cable Tray") {
       // Cable tray: just the folded trough (Enclosure base) and its Cover.
@@ -851,11 +920,11 @@
     } else {
       panelTypes = [enclosureBaseType, topBottomType, coverType, backPlateType];
     }
-
+ 
     const sheetArea = STEEL_SHEET_W * STEEL_SHEET_H;
     const pieces = [];
     const rows = [];
-
+ 
     function orientForPacking(flatW, flatH) {
       // Orient with the smaller side as width — packs tighter into
       // columns than leaving every panel in its "natural" orientation.
@@ -865,7 +934,7 @@
       const h = !fitsRotated || (fitsNormal && flatW <= flatH) ? flatH : flatW;
       return { w, h };
     }
-
+ 
     panelTypes.forEach((p) => {
       if (fitsSheetEitherWay(p.flatW, p.flatH)) {
         const { w, h } = orientForPacking(p.flatW, p.flatH);
@@ -880,7 +949,7 @@
         });
         return;
       }
-
+ 
       const split = splitLengthwise(p.flatW, p.flatH, p.minSplitParts);
       if (split) {
         const label = p.label + " (" + split.n + "-way split)";
@@ -897,7 +966,7 @@
         });
         return;
       }
-
+ 
       // Genuinely can't be made to fit even split into up to 12 equal
       // lengthwise strips — report as exceeding rather than guessing.
       rows.push({
@@ -909,12 +978,12 @@
         areaPct: (p.flatW * p.flatH * p.qty * 100) / sheetArea,
       });
     });
-
+ 
     const exceedsAny = rows.some((r) => r.exceedsSheet);
     const packResult = packSheets(pieces, STEEL_SHEET_W, STEEL_SHEET_H, STEEL_KERF_MM);
     const totalSheets = packResult.sheetCount; // actual packed count — what the diagram draws
     const totalSheetsWithSafety = totalSheets > 0 ? totalSheets + 1 : 0; // +1 safety margin, display only
-
+ 
     // Box price from material area, not sheet count: sum every piece's
     // own flat area (skipping rows that exceed a sheet even after
     // splitting, same as the diagram/packing already do), pad it for
@@ -925,7 +994,7 @@
     const adjustedAreaTotal = rawAreaTotal * lossFactor;
     const areaFractionOfSheet = adjustedAreaTotal / sheetArea;
     const computedBoxPrice = areaFractionOfSheet * steelSheetPrice;
-
+    
     return {
       rows,
       totalSheets,
@@ -1884,9 +1953,30 @@
     const sizeText =
       data.height !== null && data.width !== null
         ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm \u00d7 " + data.depth + "mm"
-        : "no clearance data for this AT";
-    const heightLines = data.isEcb
+        : "error - please check selection or manual quote data";
+    const heightLines = data.isAts || data.isMts
       ? [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Breaker category"]),
+            el("span", { class: "mono" }, [
+              !data.panelBoxSize ? "\u2014" : data.panelBoxSize.frame === null ? "MCB only" : "MCCB",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["AT bracket"]),
+            el("span", { class: "mono" }, [
+              !data.panelBoxSize || data.panelBoxSize.frame === null
+                ? "\u2014"
+                : "\u2264 " + data.panelBoxSize.frame + "AF",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Length from " + (data.isAts ? "ATS" : "MTS") + " table"]),
+            el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
+          ]),
+        ]
+      : data.isEcb
+        ? [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Top lug factor"]),
             el("span", { class: "mono" }, [data.mainLugFactor !== null ? data.mainLugFactor.toFixed(1) + "mm" : "\u2014"]),
@@ -1911,7 +2001,7 @@
             el("span", {}, ["Height subtotal"]),
             el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
           ]),
-        ]
+          ]
       : [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main clearance (AT " + main.at + ")"]),
@@ -1965,8 +2055,15 @@
         el("div", { class: "busbar-lines" }, heightLines),
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
-        data.assemblyMode
+        data.isAts || data.isMts
           ? el("div", { class: "busbar-lines" }, [
+              el("div", { class: "busbar-line" }, [
+                el("span", {}, ["Width from " + (data.isAts ? "ATS" : "MTS") + " table (" + main.poles + "P)"]),
+                el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
+              ]),
+            ])
+          : data.assemblyMode
+            ? el("div", { class: "busbar-lines" }, [
               el("div", { class: "busbar-line" }, [
                 el("span", {}, ["Assembly width (fixed)"]),
                 el("span", { class: "mono" }, ["400mm"]),
@@ -1975,7 +2072,7 @@
                 el("span", {}, ["Width subtotal"]),
                 el("span", { class: "mono" }, [Math.round(data.width) + "mm"]),
               ]),
-            ])
+              ])
           : el("div", { class: "busbar-lines" }, [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Main width"]),
@@ -2022,7 +2119,11 @@
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Depth"]),
         el("div", { class: "busbar-lines" }, [
           el("div", { class: "busbar-line" }, [
-            el("span", {}, ["Depth (based on main AT " + main.at + ")"]),
+            el("span", {}, [
+              data.isAts || data.isMts
+                ? "Depth from " + (data.isAts ? "ATS" : "MTS") + " table"
+                : "Depth (based on main AT " + main.at + ")",
+            ]),
             el("span", { class: "mono" }, [data.depth + "mm"]),
           ]),
         ]),
@@ -2534,7 +2635,9 @@
         )),
       ]),
     ]);
-    wrap.appendChild(enclosureBar);
+    if (panelType !== "Cable Tray" && panelType !== "Gutter") {
+      wrap.appendChild(enclosureBar);
+    }
 
     // Main breaker section
     const mainSection = el("div", { class: "section" }, [

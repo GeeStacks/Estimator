@@ -1,5 +1,38 @@
 const BUSBARS = [{"type":"MCB","min":16,"max":16,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":20,"max":20,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":25,"max":25,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":30,"max":30,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":32,"max":32,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":40,"max":40,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":50,"max":50,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":60,"max":60,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCB","min":63,"max":63,"condition":"exceeding 24 branches","needed":"mcb exceeding 24 branches","price":2500.0},{"type":"MCCB","min":20,"max":20,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":32,"max":32,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":40,"max":40,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":50,"max":50,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":63,"max":63,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":80,"max":80,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":100,"max":100,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":125,"max":125,"condition":null,"needed":"3MM X 16MM X 20FT (1/8 X 5/8 X 20FT)","price":4500.0},{"type":"MCCB","min":160,"max":160,"condition":null,"needed":"3MM X 25MM X 20FT (1/4 X 1 X 20FT)","price":11000.0},{"type":"MCCB","min":180,"max":180,"condition":null,"needed":"6MM X 25MM X 20FT (1/4 X 1 X 20FT)","price":11000.0},{"type":"MCCB","min":200,"max":200,"condition":null,"needed":"6MM X 25MM X 20FT (1/4 X 1 X 20FT)","price":11000.0},{"type":"MCCB","min":220,"max":220,"condition":null,"needed":"6MM X 25MM X 20FT (1/4 X 1 X 20FT)","price":11000.0},{"type":"MCCB","min":250,"max":250,"condition":null,"needed":"6MM X 25MM X 20FT (1/4 X 1 X 20FT)","price":11000.0},{"type":"MCCB","min":315,"max":315,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT)","price":16000.0},{"type":"MCCB","min":350,"max":350,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT)","price":16000.0},{"type":"MCCB","min":400,"max":400,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT)","price":16000.0},{"type":"MCCB","min":500,"max":500,"condition":null,"needed":"2* 25X6","price":18000.0},{"type":"MCCB","min":630,"max":630,"condition":null,"needed":"2* 30X6","price":28000.0},{"type":"MCCB","min":700,"max":700,"condition":null,"needed":"10MM X 40MM X 20FT (3/8 X 2 X 20FT)","price":26000.0},{"type":"MCCB","min":800,"max":800,"condition":null,"needed":"2* 40X10","price":52000.0},{"type":"MCCB","min":1000,"max":1000,"condition":null,"needed":"2*50X6","price":56000.0},{"type":"MCCB","min":1250,"max":1250,"condition":null,"needed":"2*(10MM X 50MM X 20FT (3/8 X 2 X 20FT))","price":68000.0}];
 const CONSTANTS = {"main_bend_mm":260.0,"excess_bend_mm":100.0,"ground_bus_length_mm":250.0,"neutral_bus_length_mm":250.0,"box_main_branch_gap_mm":40.0,"box_insulator_ground_stand_mm":70.0,"box_backplate_clearance_mm":50.0,"box_side_clearance_mm":15.0};
+const ECB_BOX_DIMENSIONS = [
+  { type: "MCB", frame: null, width_2_pole: 150, width_3_pole: 200, three_piece_length: 250, depth: 150 },
+  { type: "MCCB", frame: 100, width_2_pole: 200, width_3_pole: 250, three_piece_length: 350, depth: 150 },
+  { type: "MCCB", frame: 125, width_2_pole: 200, width_3_pole: 250, three_piece_length: 350, depth: 150 },
+  { type: "MCCB", frame: 250, width_2_pole: 300, width_3_pole: 350, three_piece_length: 500, depth: 150 },
+  { type: "MCCB", frame: 400, width_2_pole: 600, width_3_pole: 600, three_piece_length: 800, depth: 200 },
+  { type: "MCCB", frame: 630, width_2_pole: 600, width_3_pole: 600, three_piece_length: 800, depth: 250 },
+  { type: "MCCB", frame: 800, width_2_pole: 600, width_3_pole: 600, three_piece_length: 800, depth: 300 },
+  { type: "MCCB", frame: 1250, width_2_pole: 800, width_3_pole: 800, three_piece_length: 1600, depth: 400 },
+  { type: "MCCB", frame: 1600, width_2_pole: 1000, width_3_pole: 1000, three_piece_length: 1800, depth: 500 },
+];
+const ATS_BOX_DIMENSIONS = [
+  { type: "MCB", frame: null, width_2_pole: 400, width_3_pole: 400, length: 500, depth: 200 },
+  { type: "MCCB", frame: 100, width_2_pole: 500, width_3_pole: 500, length: 600, depth: 250 },
+  { type: "MCCB", frame: 125, width_2_pole: 500, width_3_pole: 500, length: 600, depth: 250 },
+  { type: "MCCB", frame: 250, width_2_pole: 550, width_3_pole: 550, length: 700, depth: 250 },
+  { type: "MCCB", frame: 400, width_2_pole: 700, width_3_pole: 700, length: 900, depth: 300 },
+  { type: "MCCB", frame: 630, width_2_pole: 800, width_3_pole: 800, length: 1000, depth: 300 },
+  { type: "MCCB", frame: 800, width_2_pole: 800, width_3_pole: 800, length: 1200, depth: 300 },
+  { type: "MCCB", frame: 1250, width_2_pole: 1000, width_3_pole: 1000, length: 1500, depth: 400 },
+  { type: "MCCB", frame: 1600, width_2_pole: 1200, width_3_pole: 1200, length: 1800, depth: 500 },
+];
+const MTS_BOX_DIMENSIONS = [
+  { type: "MCB", frame: null, width_2_pole: 350, width_3_pole: 350, length: 450, depth: 150 },
+  { type: "MCCB", frame: 100, width_2_pole: 400, width_3_pole: 400, length: 500, depth: 200 },
+  { type: "MCCB", frame: 125, width_2_pole: 400, width_3_pole: 400, length: 500, depth: 200 },
+  { type: "MCCB", frame: 250, width_2_pole: 500, width_3_pole: 500, length: 600, depth: 200 },
+  { type: "MCCB", frame: 400, width_2_pole: 600, width_3_pole: 600, length: 800, depth: 250 },
+  { type: "MCCB", frame: 630, width_2_pole: 700, width_3_pole: 700, length: 900, depth: 250 },
+  { type: "MCCB", frame: 800, width_2_pole: 800, width_3_pole: 800, length: 1000, depth: 300 },
+  { type: "MCCB", frame: 1250, width_2_pole: 1000, width_3_pole: 1000, length: 1300, depth: 350 },
+  { type: "MCCB", frame: 1600, width_2_pole: 1200, width_3_pole: 1200, length: 1500, depth: 400 },
+];
 const BOX_PRICING = [
   { panel_type: "MDP", material_loss_pct: 20, laser_mode: "rate", laser_rate: 0.168, laser_flat: 0, powder_mode: "rate", powder_rate: 300, powder_flat: 0, labor_mode: "perUnit", labor_rate_per_unit: 150, labor_hours: 0, labor_rate_per_hour: 0, other_price: 0, safety_factor: 1.2 },
   { panel_type: "ECB", material_loss_pct: 20, laser_mode: "rate", laser_rate: 0.168, laser_flat: 0, powder_mode: "rate", powder_rate: 300, powder_flat: 0, labor_mode: "perUnit", labor_rate_per_unit: 150, labor_hours: 0, labor_rate_per_hour: 0, other_price: 0, safety_factor: 1.2 },
