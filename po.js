@@ -23,7 +23,10 @@
   };
   let printHeader;
   try {
-    printHeader = { ...defaultPrintHeader, ...JSON.parse(localStorage.getItem("po_print_header") || "{}") };
+    // The date is never restored from storage, so each session starts with today's date.
+    const savedHeader = JSON.parse(localStorage.getItem("po_print_header") || "{}");
+    delete savedHeader.date;
+    printHeader = { ...defaultPrintHeader, ...savedHeader };
   } catch (error) {
     printHeader = { ...defaultPrintHeader };
   }
@@ -53,7 +56,8 @@
   }
 
   function savePrintHeader() {
-    localStorage.setItem("po_print_header", JSON.stringify(printHeader));
+    const { date, ...persisted } = printHeader; // date is intentionally not persisted
+    localStorage.setItem("po_print_header", JSON.stringify(persisted));
   }
 
   function savePrintFooter() {
@@ -95,6 +99,26 @@
   function buildDescriptionLines(config, name) {
     const lines = [];
     lines.push(name || "PANEL BOARD");
+
+    const isTrayType = ["Cable Tray", "Gutter", "Pull Box"].includes(config.panelType);
+    if (isTrayType) {
+      lines.push(config.panelType.toUpperCase());
+      lines.push(
+        "DIMENSIONS (L x W x H): " + (config.trayLength || 0) + " x " + (config.trayWidth || 0) + " x " + (config.trayHeight || 0) + " MM"
+      );
+      if (config.panelType === "Pull Box") {
+        lines.push(config.mountingType);
+        lines.push(config.nemaRating + ", GI#" + config.giGauge);
+      }
+      if (config.busbarGutter && config.busbarGutterKey && config.panelType !== "Cable Tray") {
+        const [bType, bAt] = config.busbarGutterKey.split("|");
+        lines.push(
+          "WITH BUSBAR: " + config.busbarGutterQty + "EA- " + bAt + "AT " + bType + ", " + (config.busbarGutterLength || 0) + " MM"
+        );
+      }
+      return lines;
+    }
+
     lines.push(config.supplyVoltage + "V, " + config.supplyDescriptionText);
     lines.push(config.mountingType);
     lines.push(config.nemaRating + ", GI#" + config.giGauge);
@@ -467,10 +491,11 @@
     const config = window.getBuilderConfig ? window.getBuilderConfig() : null;
     if (!config) return null;
     const description = buildDescriptionLines(config, name).join("\n");
+    const existing = editingId !== null ? quotations.find((q) => q.id === editingId) : null;
     const record = {
       name: name || "PANEL BOARD",
       description,
-      qty: 1,
+      qty: existing && existing.qty ? existing.qty : 1,
       unit: "ASSY",
       unitCost: config.grandTotal,
       config,
