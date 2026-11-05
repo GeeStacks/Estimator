@@ -1,6 +1,7 @@
 (function () {
   const FIELD_ORDER = ["brand", "at", "poles", "model"];
   const BUSBAR_SAFETY_FACTOR = 1.2;
+  const MAIN_BRANCH_INTERVAL_MM = 15;
   const DEFAULT_STEEL_SHEET_PRICE = 1800;
   const DEFAULT_BOX_SAFETY_FACTOR = 1.2;
   const BOX_SAFETY_FACTOR_STORAGE_KEY = "box_safety_factor";
@@ -548,9 +549,11 @@
     return { cost, breakdown, atsRow, exceedsTable: false };
   }
 
-  // Box Height = main clearance + main/branch gap + (branch breaker width
-  // stacked 2-per-row) + insulator/ground stand allowance + backplate
-  // clearance.
+  // Box Height for ATS/MTS panels with branches uses both main and branch
+  // bend clearances around the main and branch breaker blocks.
+  // Other box heights use main clearance + main/branch gap + (branch
+  // breaker width stacked 2-per-row) + insulator/ground stand allowance
+  // + backplate clearance.
   // Box Width = main width + side clearance (both sides) + branch height
   // + lug factor (the matched lug's L dimension, doubled for parallel runs)
   // + the same bending clearance used in Height.
@@ -595,6 +598,7 @@
       (sum, group) => sum + (group.rowData.width || 0) * Math.ceil(group.rawQty / 2),
       0
     );
+    const branchClearance = mainClearance;
     const branchBreakdown = groupedBranches.map((group) => ({
       width: group.rowData.width,
       rows: Math.ceil(group.rawQty / 2),
@@ -603,6 +607,7 @@
     const isEcb = panelType === "ECB";
     const isAts = panelType === "ATS/ATS MDP";
     const isMts = panelType === "MTS/ MTS MDP";
+    const isAtsMtsWithBranches = (isAts || isMts) && branchQty > 0;
     const ecbBoxSize = isEcb
       ? lookupEcbBoxDimensions(mainData)
       : null;
@@ -615,11 +620,23 @@
           "frame"
         )
       : null;
-    const height = isEcb || isAts || isMts
-      ? (isEcb ? (ecbBoxSize ? ecbBoxSize.three_piece_length : null) : (panelBoxSize ? panelBoxSize.length : null))
-      : mainClearance !== null && mainLugFactor !== null
-        ? mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
-        : null;
+    let height;
+    if (isAtsMtsWithBranches) {
+      height =
+        mainClearance !== null && mainLugFactor !== null && branchClearance !== null
+          ? mainClearance + mainLugFactor + mainHeight + branchClearance +
+            branchBlockHeight + groundStand + backplateClearance
+          : null;
+    } else if (isEcb || isAts || isMts) {
+      height = isEcb
+        ? (ecbBoxSize ? ecbBoxSize.three_piece_length : null)
+        : (panelBoxSize ? panelBoxSize.length : null);
+    } else {
+      height =
+        mainClearance !== null && mainLugFactor !== null
+          ? mainClearance + mainLugFactor + mainHeight + gap + branchBlockHeight + groundStand + backplateClearance
+          : null;
+    }
 
     // ---- First/Second branch: which branches set each side's lug
     // factor + clearance (and, for width, each side's physical breaker
@@ -689,15 +706,28 @@
     const heightSideBEntry = secondBranch && secondBranch.rawQty > 1 ? secondBranch : null;
     const heightSideB = heightSideBEntry ? heightSideBEntry.rowData.height || 0 : 0;
 
-    const width = isEcb || isAts || isMts
-      ? (isEcb ? (ecbBoxSize ? ecbBoxSize.width : null) : (panelBoxSize ? panelBoxSize.width : null))
-      : useAssembly
-        ? 400
-        : sidesResolved
-          ? mainData.width + heightSideA + heightSideB +
-            (side1.lugFactor + side1.sideClearance) +
-            (side2.lugFactor + side2.sideClearance)
-          : null;
+    const mdpWidth = sidesResolved
+      ? mainData.width + heightSideA + heightSideB +
+        (side1.lugFactor + side1.sideClearance + MAIN_BRANCH_INTERVAL_MM) +
+        (side2.lugFactor + side2.sideClearance + MAIN_BRANCH_INTERVAL_MM)
+      : null;
+    const panelTableWidth = panelBoxSize ? panelBoxSize.width : null;
+    let width;
+    if (isEcb) {
+      width = ecbBoxSize ? ecbBoxSize.width : null;
+    } else if (isAts || isMts) {
+      width = isAtsMtsWithBranches
+        ? panelTableWidth === null
+          ? mdpWidth
+          : mdpWidth === null
+            ? panelTableWidth
+            : Math.max(panelTableWidth, mdpWidth)
+        : panelTableWidth;
+    } else if (useAssembly) {
+      width = 400;
+    } else {
+      width = mdpWidth;
+    }
 
     // Depth: 150mm by default, 200mm from 315A up, 250mm from 800A up.
     const depth = isEcb || isAts || isMts
@@ -706,15 +736,24 @@
 
     return {
       mainClearance, mainLugFactor, mainHeight, gap, branchBlockHeight, branchRows, branchQty, branchWidth,
-      isEcb, isAts, isMts, panelBoxSize,
+      isEcb, isAts, isMts, isAtsMtsWithBranches, panelBoxSize,
       branchBreakdown,
       heightSideA, heightSideB, heightSideBEntry,
-      groundStand, backplateClearance, clearanceRow,
+      groundStand, backplateClearance, clearanceRow, branchClearance,
+      branchClearanceAt: mainData.at,
+      mainBranchInterval: MAIN_BRANCH_INTERVAL_MM,
+      panelTableWidth, mdpWidth,
       mainWidth: mainData.width, height, width, depth,
       assemblyMode: useAssembly,
       firstBranch, secondBranch, side1, side2,
       exceedsTable: isEcb || isAts || isMts
-        ? (isEcb ? !ecbBoxSize : !panelBoxSize)
+        ? (isEcb
+          ? !ecbBoxSize
+          : !panelBoxSize ||
+            (isAtsMtsWithBranches &&
+              (mainClearance === null ||
+                mainLugFactor === null ||
+                !sidesResolved)))
         : !clearanceRow ||
           (mainData.type !== "MCB" && !mainLugRow) ||
           (!useAssembly && branchEntries.length > 0 && (side1.exceeds || side2.exceeds)),
@@ -1954,7 +1993,55 @@ function computeSteelSheetAllocation(boxData) {
       data.height !== null && data.width !== null
         ? Math.round(data.height) + "mm \u00d7 " + Math.round(data.width) + "mm \u00d7 " + data.depth + "mm"
         : "error - please check selection or manual quote data";
-    const heightLines = data.isAts || data.isMts
+    const heightLines = data.isAtsMtsWithBranches
+      ? [
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main clearance (AT " + main.at + ")"]),
+            el("span", { class: "mono" }, [data.mainClearance !== null ? data.mainClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main lug factor (" + (data.clearanceRow ? data.clearanceRow.mgl_cat_no : "\u2014") + ")"]),
+            el("span", { class: "mono" }, [
+              data.mainLugFactor !== null
+                ? (data.mainLugFactor === 0 ? "0mm (MCB, no lugs)" : data.mainLugFactor.toFixed(1) + "mm")
+                : "\u2014",
+            ]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Main breaker length"]),
+            el("span", { class: "mono" }, [data.mainHeight + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Branch clearance" +
+                (data.branchClearanceAt !== null ? " (AT " + data.branchClearanceAt + ")" : ""),
+            ]),
+            el("span", { class: "mono" }, [data.branchClearance !== null ? data.branchClearance + "mm" : "\u2014"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, [
+              "Branch block (" +
+                data.branchBreakdown.map((b) => b.width + "mm \u00d7 " + b.rows).join(" + ") +
+                ", qty " +
+                data.branchQty +
+                ")",
+            ]),
+            el("span", { class: "mono" }, [Math.round(data.branchBlockHeight) + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Insulator/ground stand"]),
+            el("span", { class: "mono" }, [data.groundStand + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Backplate clearance"]),
+            el("span", { class: "mono" }, [data.backplateClearance + "mm"]),
+          ]),
+          el("div", { class: "busbar-line" }, [
+            el("span", {}, ["Height subtotal"]),
+            el("span", { class: "mono" }, [data.height !== null ? Math.round(data.height) + "mm" : "\u2014"]),
+          ]),
+        ]
+      : data.isAts || data.isMts
       ? [
           el("div", { class: "busbar-line" }, [
             el("span", {}, ["Breaker category"]),
@@ -2056,12 +2143,31 @@ function computeSteelSheetAllocation(boxData) {
 
         el("div", { class: "busbar-subtitle", style: "margin-top:14px;" }, ["Width"]),
         data.isAts || data.isMts
-          ? el("div", { class: "busbar-lines" }, [
-              el("div", { class: "busbar-line" }, [
-                el("span", {}, ["Width from " + (data.isAts ? "ATS" : "MTS") + " table (" + main.poles + "P)"]),
-                el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
-              ]),
-            ])
+          ? el("div", { class: "busbar-lines" }, data.isAtsMtsWithBranches
+            ? [
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Default width from " + (data.isAts ? "ATS" : "MTS") + " table (" + main.poles + "P)"]),
+                  el("span", { class: "mono" }, [
+                    data.panelTableWidth !== null ? Math.round(data.panelTableWidth) + "mm" : "\u2014",
+                  ]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["MDP formula width"]),
+                  el("span", { class: "mono" }, [
+                    data.mdpWidth !== null ? Math.round(data.mdpWidth) + "mm" : "\u2014",
+                  ]),
+                ]),
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Width used (higher value)"]),
+                  el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
+                ]),
+              ]
+            : [
+                el("div", { class: "busbar-line" }, [
+                  el("span", {}, ["Width from " + (data.isAts ? "ATS" : "MTS") + " table (" + main.poles + "P)"]),
+                  el("span", { class: "mono" }, [data.width !== null ? Math.round(data.width) + "mm" : "\u2014"]),
+                ]),
+              ])
           : data.assemblyMode
             ? el("div", { class: "busbar-lines" }, [
               el("div", { class: "busbar-line" }, [
@@ -2092,21 +2198,21 @@ function computeSteelSheetAllocation(boxData) {
           ]),
           el("div", { class: "busbar-line" }, [
             el("span", {}, [
-              "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance",
+              "First branch (AT " + (data.side1.at !== null ? data.side1.at : "\u2014") + ") lug + clearance + interval",
             ]),
             el("span", { class: "mono" }, [
               data.side1.lugFactor !== null
-                ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + "mm"
+                ? data.side1.lugFactor.toFixed(1) + " + " + data.side1.sideClearance + " + " + data.mainBranchInterval + "mm"
                 : "\u2014",
             ]),
           ]),
           el("div", { class: "busbar-line" }, [
             el("span", {}, [
-              "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance",
+              "Second branch (AT " + (data.side2.at !== null ? data.side2.at : "\u2014") + ") lug + clearance + interval",
             ]),
             el("span", { class: "mono" }, [
               data.side2.lugFactor !== null
-                ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + "mm"
+                ? data.side2.lugFactor.toFixed(1) + " + " + data.side2.sideClearance + " + " + data.mainBranchInterval + "mm"
                 : "\u2014",
             ]),
           ]),
@@ -2585,6 +2691,7 @@ function computeSteelSheetAllocation(boxData) {
         class: "panel-info-select",
         onchange: (e) => {
           panelType = e.target.value;
+          if (panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP") main.qty = 2;
           applyBoxPricingDefaults(panelType);
           if (panelType === "ECB") branches = [];
           if (isTrayOrGutter()) {
@@ -3295,6 +3402,7 @@ function computeSteelSheetAllocation(boxData) {
     if (!config) return;
     main = { ...config.main };
     panelType = config.panelType || "MDP";
+    if (panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP") main.qty = 2;
     applyBoxPricingDefaults(panelType);
     branches = panelType === "ECB" || isTrayOrGutter() ? [] : config.branches.map((b) => ({ ...b }));
     trayLength = config.trayLength || 0;
