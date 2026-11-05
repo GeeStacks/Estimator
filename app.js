@@ -387,7 +387,7 @@
   // that busbar the gutter carries — cost uses the same %-of-a-6000mm-bar
   // pricing as every other custom busbar calc, just multiplied by qty.
   function computeBusbarGutterCost() {
-    if (!busbarGutter) return null;
+    if (!busbarGutter || (panelType !== "Gutter" && panelType !== "Pull Box")) return null;
     // 2 insulator supports per busbar, regardless of whether a busbar size
     // has been picked yet (the quantity of busbars alone determines this).
     const insulatorCount = busbarGutterQty * 2;
@@ -2580,6 +2580,8 @@ function computeSteelSheetAllocation(boxData) {
     consider(main, "Main");
     activeBranches().forEach((sel, i) => consider(sel, "Branch " + (i + 1)));
 
+    const breakersCost = cost; // breakers only, before busbars/lugs/box/etc.
+
     const eligible = assemblyEligible();
     // Eligibility can be lost mid-session (e.g. a non-MCB branch gets
     // added while assembly mode was on) — when that happens, actually
@@ -2649,7 +2651,7 @@ function computeSteelSheetAllocation(boxData) {
     if (atsMts && atsMts.cost) cost += atsMts.cost;
 
     return {
-      cost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
+      cost, breakersCost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
       assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, busbarGutterCost, boxDimensions, steelSheets, atsMts,
       laserCutCost, powderCoatingCost, laborCost, materialCost,
       boxPrice: boxPriceTotal,
@@ -2690,8 +2692,11 @@ function computeSteelSheetAllocation(boxData) {
       el("select", {
         class: "panel-info-select",
         onchange: (e) => {
+          const wasAtsMts = panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP";
           panelType = e.target.value;
-          if (panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP") main.qty = 2;
+          const isAtsMtsNow = panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP";
+          if (isAtsMtsNow) main.qty = 2;
+          else if (wasAtsMts) main.qty = 1;
           applyBoxPricingDefaults(panelType);
           if (panelType === "ECB") branches = [];
           if (isTrayOrGutter()) {
@@ -3220,7 +3225,7 @@ function computeSteelSheetAllocation(boxData) {
 
       el("div", { class: "receipt-line subtotal" }, [
         el("span", {}, ["Total Breaker cost"]),
-        el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.cost)]),
+        el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.breakersCost)]),
       ]),
 
       el("div", { class: "receipt-line" }, [
@@ -3243,6 +3248,12 @@ function computeSteelSheetAllocation(boxData) {
         el("span", {}, ["Neutral busbar"]),
         el("span", { class: "mono" }, ["\u20B1" + formatMoney(neutralCost)]),
       ]),
+      totals.busbarGutterCost && totals.busbarGutterCost.cost !== null
+        ? el("div", { class: "receipt-line" }, [
+            el("span", {}, ["Busbar gutter (busbars + insulators)"]),
+            el("span", { class: "mono" }, ["\u20B1" + formatMoney(totals.busbarGutterCost.cost)]),
+          ])
+        : null,
       totals.atsMts
         ? el("div", { class: "receipt-line" }, [
             el("span", {}, [panelType === "MTS/ MTS MDP" ? "MTS price" : "ATS price"]),
