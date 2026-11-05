@@ -80,6 +80,11 @@
     return node;
   }
 
+  // Peso amounts on the PO are always rounded UP to a whole number.
+  function roundUp(n) {
+    return Math.ceil(Number(n || 0) - 1e-9);
+  }
+
   function formatMoney(n) {
     return Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   }
@@ -106,10 +111,6 @@
       lines.push(
         "DIMENSIONS (L x W x H): " + (config.trayLength || 0) + " x " + (config.trayWidth || 0) + " x " + (config.trayHeight || 0) + " MM"
       );
-      if (config.panelType === "Pull Box") {
-        lines.push(config.mountingType);
-        lines.push(config.nemaRating + ", GI#" + config.giGauge);
-      }
       if (config.busbarGutter && config.busbarGutterKey && config.panelType !== "Cable Tray") {
         const [bType, bAt] = config.busbarGutterKey.split("|");
         lines.push(
@@ -187,7 +188,7 @@
   }
 
   function renderRow(q, index) {
-    const totalCost = q.qty * q.unitCost;
+    const totalCost = q.qty * roundUp(q.unitCost);
     const isEditing = editingId === q.id;
     const descriptionBody = q.description.split("\n").slice(1).join("\n");
 
@@ -211,7 +212,7 @@
         }),
       ]),
       el("td", { class: "po-unit" }, [q.unit]),
-      el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.unitCost)]),
+      el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(roundUp(q.unitCost))]),
       el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(totalCost)]),
       el("td", { class: "po-actions" }, [
         el("button", { class: "toolbar-btn", onclick: () => editQuotation(q) }, ["Edit"]),
@@ -231,8 +232,8 @@
         el("td", { class: "po-description" }, [el("pre", {}, [q.description])]),
         el("td", { class: "po-qty" }, [String(q.qty)]),
         el("td", { class: "po-unit" }, [q.unit]),
-        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.unitCost)]),
-        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.qty * q.unitCost)]),
+        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(roundUp(q.unitCost))]),
+        el("td", { class: "po-cost mono" }, ["\u20B1" + formatMoney(q.qty * roundUp(q.unitCost))]),
       ])
     );
 
@@ -383,7 +384,7 @@
       );
     }
 
-    const grandTotal = quotations.reduce((sum, q) => sum + q.qty * q.unitCost, 0);
+    const grandTotal = quotations.reduce((sum, q) => sum + q.qty * roundUp(q.unitCost), 0);
 
     const table = el("table", { class: "admin-table po-table" }, [
       el("thead", {}, [
@@ -497,7 +498,7 @@
       description,
       qty: existing && existing.qty ? existing.qty : 1,
       unit: "ASSY",
-      unitCost: config.grandTotal,
+      unitCost: roundUp(config.grandTotal),
       config,
       savedAt: Date.now(),
     };
