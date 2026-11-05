@@ -14,10 +14,6 @@ const APP_SHELL = [
   "./seed_extra.js",
   "./box_seed.js",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/jn-controls-logo.png",
-  "./icons/app-logo.png",
   "./icons/jn-pwa-icon-192.png",
   "./icons/jn-pwa-icon-512.png",
   "./icons/jn-pwa-icon-maskable-512.png"
