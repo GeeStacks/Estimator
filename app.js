@@ -428,7 +428,8 @@
     }
 
     if (!row) return null;
-    const widthKey = Number(poles) === 2 ? "width_2_pole" : Number(poles) === 3 ? "width_3_pole" : null;
+    // 1-pole mains use the 2-pole configuration.
+    const widthKey = Number(poles) === 1 || Number(poles) === 2 ? "width_2_pole" : Number(poles) === 3 ? "width_3_pole" : null;
     return widthKey && row[widthKey] != null ? { ...row, width: row[widthKey] } : null;
   }
 
@@ -450,8 +451,11 @@
     }
 
     if (!row) return null;
+    // 1-pole mains use the 2-pole configuration.
     const widthKey =
-      Number(breaker.poles) === 2 ? "width_2_pole" : Number(breaker.poles) === 3 ? "width_3_pole" : null;
+      Number(breaker.poles) === 1 || Number(breaker.poles) === 2
+        ? "width_2_pole"
+        : Number(breaker.poles) === 3 ? "width_3_pole" : null;
     return widthKey && row[widthKey] != null ? { ...row, width: row[widthKey] } : null;
   }
 
@@ -504,7 +508,9 @@
   // Same-or-next-higher AT match against the ATS/MTS table, scoped to the
   // matching pole count (2P and 3P have separate bracket ladders).
   function lookupAtsMts(at, poles) {
-    const candidates = ATS_MTS.filter((r) => Number(r.pole) === Number(poles));
+    // 1-pole mains use the 2-pole rows.
+    const lookupPole = Number(poles) === 1 ? 2 : Number(poles);
+    const candidates = ATS_MTS.filter((r) => Number(r.pole) === lookupPole);
     const sorted = candidates.sort((a, b) => Number(a.max) - Number(b.max));
     const idx = sorted.findIndex((r) => Number(at) <= Number(r.max));
     return idx === -1 ? null : sorted[idx];
@@ -1389,6 +1395,7 @@ function computeSteelSheetAllocation(boxData) {
 
   let supplyVoltage = 230;
   let needsNeutralBar = false;
+  let neutralBarManual = false; // true once the user ticks/unticks the neutral bar themselves
   let busbarSourceMode = "custom"; // "custom" (size/AT-based) | "inStock" (branch-count based)
   let showSteelSheetDiagram = false;
   let profitMode = "percent"; // "percent" | "flat"
@@ -2621,10 +2628,20 @@ function computeSteelSheetAllocation(boxData) {
     cost += groundLugs.cost;
 
     const groundBusbar = computeGroundBusbar();
-    if (groundBusbar && groundBusbar.cost !== null) cost += groundBusbar.cost;
+    // Custom (cut-to-size) ground/neutral busbars carry the same x1.2 busbar
+    // safety factor as main/branch busbars; in-stock ones do not.
+    const groundBusbarCharged =
+      groundBusbar && groundBusbar.cost !== null
+        ? groundBusbar.cost * (groundBusbar.source === "custom" ? BUSBAR_SAFETY_FACTOR : 1)
+        : 0;
+    cost += groundBusbarCharged;
 
     const neutralBusbar = computeNeutralBusbar(needsNeutralBar);
-    if (neutralBusbar.cost !== null) cost += neutralBusbar.cost;
+    const neutralBusbarCharged =
+      neutralBusbar.cost !== null
+        ? neutralBusbar.cost * (neutralBusbar.source === "custom" ? BUSBAR_SAFETY_FACTOR : 1)
+        : 0;
+    cost += neutralBusbarCharged;
 
     const busbarGutterCost = computeBusbarGutterCost();
     if (busbarGutterCost && busbarGutterCost.cost !== null) cost += busbarGutterCost.cost;
@@ -2651,7 +2668,7 @@ function computeSteelSheetAllocation(boxData) {
     if (atsMts && atsMts.cost) cost += atsMts.cost;
 
     return {
-      cost, breakersCost, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
+      cost, breakersCost, groundBusbarCharged, neutralBusbarCharged, circuitCount, missing, mainBusbar, branchBusbar, busbarTotal, breakerLines,
       assemblyEligible: eligible, assembly, mechLugs, groundLugs, groundBusbar, neutralBusbar, busbarGutterCost, boxDimensions, steelSheets, atsMts,
       laserCutCost, powderCoatingCost, laborCost, materialCost,
       boxPrice: boxPriceTotal,
@@ -2713,7 +2730,7 @@ function computeSteelSheetAllocation(boxData) {
           class: "panel-info-select",
           onchange: (e) => {
             supplyVoltage = parseInt(e.target.value, 10);
-            needsNeutralBar = neutralBarRecommended();
+            if (!neutralBarManual) needsNeutralBar = neutralBarRecommended();
             render();
           },
         }, [230, 400].map((v) =>
@@ -2784,7 +2801,7 @@ function computeSteelSheetAllocation(boxData) {
         row,
         (next) => {
           branches = branches.map((r, i) => (i === idx ? next : r));
-          if (neutralBarRecommended()) needsNeutralBar = true;
+          if (!neutralBarManual) needsNeutralBar = neutralBarRecommended();
           render();
         },
         {
@@ -2792,6 +2809,7 @@ function computeSteelSheetAllocation(boxData) {
           showSpare: true,
           onRemove: () => {
             branches = branches.filter((_, i) => i !== idx);
+            if (!neutralBarManual) needsNeutralBar = neutralBarRecommended();
             render();
           },
         }
@@ -3074,6 +3092,7 @@ function computeSteelSheetAllocation(boxData) {
             checked: needsNeutralBar ? "checked" : undefined,
             onchange: (e) => {
               needsNeutralBar = e.target.checked;
+              neutralBarManual = true;
               render();
             },
           }),
@@ -3139,9 +3158,8 @@ function computeSteelSheetAllocation(boxData) {
     const surchargeActive =
       (totals.mainBusbar && totals.mainBusbar.surcharge) ||
       (totals.branchBusbar && totals.branchBusbar.surcharge);
-    const groundCost =
-      totals.groundLugs.cost + (totals.groundBusbar && totals.groundBusbar.cost !== null ? totals.groundBusbar.cost : 0);
-    const neutralCost = totals.neutralBusbar.cost !== null ? totals.neutralBusbar.cost : 0;
+    const groundCost = totals.groundLugs.cost + totals.groundBusbarCharged;
+    const neutralCost = totals.neutralBusbarCharged;
     const receipt = computeReceipt(totals.cost);
 
     function adjustRow(label, mode, value, onModeChange, onValueChange, amountLabel) {
@@ -3429,6 +3447,7 @@ function computeSteelSheetAllocation(boxData) {
     supplyVoltage = config.supplyVoltage || 230;
     needsNeutralBar =
       config.needsNeutralBar !== undefined ? config.needsNeutralBar : neutralBarRecommended();
+    neutralBarManual = needsNeutralBar !== neutralBarRecommended();
     busbarSourceMode = config.busbarSourceMode || "custom";
     profitMode = config.profitMode || "percent";
     profitValue = config.profitValue || 0;
