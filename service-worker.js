@@ -1,4 +1,4 @@
-const CACHE_NAME = "panel-board-builder-v14";
+const CACHE_NAME = "panel-board-builder-v15";
 
 const APP_SHELL = [
   "./",
@@ -19,7 +19,8 @@ const APP_SHELL = [
   "./icons/jn-controls-logo.png",
   "./icons/app-logo.png",
   "./icons/jn-pwa-icon-192.png",
-  "./icons/jn-pwa-icon-512.png"
+  "./icons/jn-pwa-icon-512.png",
+  "./icons/jn-pwa-icon-maskable-512.png"
 ];
 
 // 1. INSTALL: Cache app shell & activate immediately
