@@ -1,4 +1,4 @@
-{
+
   "name": "Panel Board Builder",
   "short_name": "Panel Builder",
   "description": "Select main and branch breakers to estimate a panel board.",
@@ -22,7 +22,7 @@
       "purpose": "any"
     },
     {
-      "src": "icons/jn-pwa-icon-512.png",
+      "src": "icons/jn-pwa-icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
