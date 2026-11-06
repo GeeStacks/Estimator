@@ -569,6 +569,6 @@
     return el("tr", {}, cells);
   }
 
-  window.DBReady.then(render);
+  window.DBReady.then(render).catch((err) => window.reportDBError(err));
   window.renderAdmin = render;
 })();
