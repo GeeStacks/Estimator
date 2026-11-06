@@ -1847,7 +1847,7 @@ function computeSteelSheetAllocation(boxData) {
         data.exceedsTable
           ? el("div", { class: "warn" }, [
               data.source === "inStock"
-                ? "Branch count exceeds the grounding busbars table \u2014 needs a manual quote."
+                ? "Branch count exceeds the grounding busbars table \u2014 Use Custom Option Instead."
                 : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
             ])
           : null,
