@@ -1121,7 +1121,7 @@ function computeSteelSheetAllocation(boxData) {
   }
 
   function anyBranchAtOrAbove(threshold) {
-    return branches.some((sel) => {
+    return activeBranches().some((sel) => {
       const rowData = resolveRowData(sel);
       return rowData && Number(rowData.at) >= threshold;
     });
@@ -1132,7 +1132,7 @@ function computeSteelSheetAllocation(boxData) {
     const mainData = resolveRowData(main);
     if (!mainData) return false;
     if (mainData.poles !== 2 && mainData.poles !== 3) return false;
-    const resolvedBranches = branches
+    const resolvedBranches = activeBranches()
       .map((sel) => resolveRowData(sel))
       .filter(Boolean);
     if (resolvedBranches.length === 0) return false;
@@ -1146,7 +1146,7 @@ function computeSteelSheetAllocation(boxData) {
     const table = mainData.poles === 2 ? ASSEMBLIES["2P"] : ASSEMBLIES["3P"];
 
     let totalWays = 0;
-    branches.forEach((sel) => {
+    activeBranches().forEach((sel) => {
       const rowData = resolveRowData(sel);
       if (!rowData) return;
       totalWays += sel.qty * rowData.poles;
@@ -1847,7 +1847,7 @@ function computeSteelSheetAllocation(boxData) {
         data.exceedsTable
           ? el("div", { class: "warn" }, [
               data.source === "inStock"
-                ? "Branch count exceeds the grounding busbars table \u2014 Use Custom Option Instead."
+                ? "Branch count exceeds the grounding busbars table \u2014 needs a manual quote."
                 : "Main breaker's AT exceeds the busbar table \u2014 needs a manual quote.",
             ])
           : null,
@@ -3397,7 +3397,7 @@ function computeSteelSheetAllocation(boxData) {
   window.DBReady.then(() => {
     applyBoxPricingDefaults(panelType);
     render();
-  });
+  }).catch((err) => window.reportDBError(err));
   window.renderBuilder = render;
   window.refreshBoxPricingDefaults = function () {
     applyBoxPricingDefaults(panelType);
@@ -3409,7 +3409,7 @@ function computeSteelSheetAllocation(boxData) {
   // without duplicating the breaker-matching logic here.
   window.getBuilderConfig = function () {
     const mainResolved = resolveRowData(main);
-    const branchesResolved = branches.map((sel) => ({ sel: { ...sel }, rowData: resolveRowData(sel) }));
+    const branchesResolved = activeBranches().map((sel) => ({ sel: { ...sel }, rowData: resolveRowData(sel) }));
     const totals = computeTotals();
     const receipt = computeReceipt(totals.cost);
     return {
@@ -3460,8 +3460,9 @@ function computeSteelSheetAllocation(boxData) {
     if (config.boxSafetyFactor !== undefined) {
       const factor = Number(config.boxSafetyFactor);
       if (Number.isFinite(factor) && factor >= 1) {
+        // In-memory only: loading a saved quote must not overwrite the
+        // user's stored default safety factor for this panel type.
         boxSafetyFactor = factor;
-        saveBoxSafetyFactor();
       } else {
         console.error("Unable to load quotation: invalid box safety factor.", config.boxSafetyFactor);
       }
