@@ -19,7 +19,7 @@ const SEED_CLEARANCE = [
 ];
 const CLEARANCE = [];
 
-// MGL lug body dimensions (mm), converted from inch catalog specs.
+
 const SEED_LUG_DIMENSIONS = [
   { cat_no: "MGL-A6", relative_mmsq_size: "10/14MMSQ", wire_range: "4\u201314 AWG", bolt_size_in: "1/4\"", metric_bolt_mm: 6.35, L: 27.00, W: 12.70, G: 9.60, H: 12.70, F: 2.39, std_pkg: 50 },
   { cat_no: "MGL-A2", relative_mmsq_size: "", wire_range: "2\u201314 AWG", bolt_size_in: "1/4\"", metric_bolt_mm: 6.35, L: 29.39, W: 12.70, G: 11.99, H: 14.00, F: 2.74, std_pkg: 200 },
@@ -35,9 +35,7 @@ const SEED_LUG_DIMENSIONS = [
 ];
 const LUG_DIMENSIONS = [];
 
-// ATS/MTS bending, motor, controller & accessories reference, by main AT
-// range and pole count. AT is stored as min/max (single-value rows have
-// min === max), same convention as the busbars table.
+
 const SEED_ATS_MTS = [
   { min: 50, max: 100, pole: 2, bend_1st: 100, bend_2nd: 100, bend_hor: 200, bend_3rd: 100, bend_4th: 100, total_length_mm: 600, motor: 8000, controller: 3000, accessories: 6000 },
   { min: 125, max: 250, pole: 2, bend_1st: 150, bend_2nd: 100, bend_hor: 320, bend_3rd: 150, bend_4th: 100, total_length_mm: 820, motor: 10000, controller: 3000, accessories: 6000 },
