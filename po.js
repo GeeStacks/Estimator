@@ -527,6 +527,6 @@
   window.DBReady.then(async () => {
     await refreshQuotations();
     render();
-  });
+  }).catch((err) => window.reportDBError(err));
   window.renderPO = render;
 })();
