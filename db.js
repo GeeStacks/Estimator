@@ -39,9 +39,54 @@
     }
   }
 
+  // Shows a visible banner so a storage failure doesn't leave blank pages.
+  // Safe to call more than once; later calls replace the message.
+  function showDBBanner(message, isError) {
+    let bar = document.getElementById("db-error-banner");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "db-error-banner";
+      bar.setAttribute("role", "alert");
+      bar.style.cssText =
+        "position:sticky;top:0;z-index:9999;padding:10px 14px;font:500 14px/1.4 sans-serif;color:#fff;";
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+    bar.style.background = isError ? "#7a1f1f" : "#7a5a00";
+    bar.textContent = message;
+  }
+  function hideDBBanner() {
+    const bar = document.getElementById("db-error-banner");
+    if (bar) bar.remove();
+  }
+  window.reportDBError = function (err) {
+    console.error("Database failed to start.", err);
+    const detail = err && err.message ? " (" + err.message + ")" : "";
+    showDBBanner(
+      "The app's local database could not be opened" + detail +
+        ". Private/incognito mode, blocked site storage, or another open tab on an older version can cause this. " +
+        "Close other tabs of this app, allow storage, and reload.",
+      true
+    );
+  };
+
   function openIDB() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      if (!window.indexedDB) {
+        reject(new Error("IndexedDB is not available in this browser"));
+        return;
+      }
+      let req;
+      try {
+        req = indexedDB.open(DB_NAME, DB_VERSION);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      // Another tab still holds an older version open, so the upgrade is
+      // waiting. It resumes on its own once that tab closes, so warn
+      // instead of rejecting.
+      req.onblocked = () =>
+        showDBBanner("Database upgrade is waiting: close other tabs or windows of this app.", false);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(TABLES_STORE)) db.createObjectStore(TABLES_STORE);
@@ -50,8 +95,14 @@
           db.createObjectStore(QUOTATIONS_STORE, { keyPath: "id", autoIncrement: true });
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const handle = req.result;
+        // If a newer version of the app wants to upgrade, get out of its way.
+        handle.onversionchange = () => handle.close();
+        hideDBBanner();
+        resolve(handle);
+      };
+      req.onerror = () => reject(req.error || new Error("Unable to open the database"));
     });
   }
 
