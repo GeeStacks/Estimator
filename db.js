@@ -279,6 +279,9 @@
     return changed;
   }
 
+  // One-time migration of legacy busbar rows (min/max/condition shape) to the
+  // single-"at" shape. MCB rows get their standard bar/price ONLY during that
+  // migration, so later edits made in Database admin are kept across reloads.
   function normalizeBusbars(rows) {
     let changed = false;
     rows.forEach((row) => {
@@ -286,17 +289,12 @@
         row.at = row.max !== undefined ? row.max : row.min || 0;
         changed = true;
       }
-      if (row.type === "MCB") {
-        if (row.needed !== "3MM X 10MM X 20FT") {
+      const legacy = row.min !== undefined || row.max !== undefined || row.condition !== undefined;
+      if (legacy) {
+        if (row.type === "MCB") {
           row.needed = "3MM X 10MM X 20FT";
-          changed = true;
-        }
-        if (row.price !== 2500) {
           row.price = 2500;
-          changed = true;
         }
-      }
-      if (row.min !== undefined || row.max !== undefined || row.condition !== undefined) {
         delete row.min;
         delete row.max;
         delete row.condition;
@@ -304,6 +302,17 @@
       }
     });
     return changed;
+  }
+
+  // Older saved clearance tables stop at 800A. If a table has no rows above
+  // 800A at all, add the code-default rows for 1000A and up (rows the user
+  // already has are never touched).
+  function healClearance(rows) {
+    if (rows.some((r) => Number(r.at) > 800)) return false;
+    SEED_CLEARANCE.filter((d) => Number(d.at) > 800).forEach((d) => {
+      rows.push({ id: nextId(rows), ...d });
+    });
+    return true;
   }
 
   const DBReady = (async () => {
@@ -320,6 +329,7 @@
           (name === "box_pricing" && healBoxPricing(seed)) ||
           (name === "mech_lugs" && healMechLugCatalog(seed)) ||
           (name === "lug_dimensions" && healLugRelativeMmsq(seed)) ||
+          (name === "clearance" && healClearance(seed)) ||
           (name === "busbars" && normalizeBusbars(seed));
         if (seedChanged) await idbPut(idbHandle, SEEDS_STORE, name, seed);
       }
@@ -333,6 +343,7 @@
           (name === "box_pricing" && healBoxPricing(live)) ||
           (name === "mech_lugs" && healMechLugCatalog(live)) ||
           (name === "lug_dimensions" && healLugRelativeMmsq(live)) ||
+          (name === "clearance" && healClearance(live)) ||
           (name === "busbars" && normalizeBusbars(live));
         if (liveChanged) await idbPut(idbHandle, TABLES_STORE, name, live);
       }
@@ -401,6 +412,7 @@
         const rows = data[name].map((r, i) => ({ id: i + 1, ...r }));
         if (name === "busbars") normalizeBusbars(rows);
         if (name === "box_pricing") healBoxPricing(rows);
+        if (name === "clearance") healClearance(rows);
         DB[name] = rows;
         await idbPut(idbHandle, SEEDS_STORE, name, rows.map((r) => ({ ...r })));
         await idbPut(idbHandle, TABLES_STORE, name, rows);

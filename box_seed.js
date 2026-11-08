@@ -16,6 +16,13 @@ const SEED_CLEARANCE = [
   { at: 630, wire_size: "2 \u00d7 185 mm\u00b2 Cu", lug_size_label: "2 \u00d7 185 mm\u00b2 (2 \u00d7 350 MCM)", bending_clearance_mm: 300, parallel_count: 2, mgl_cat_no: "MGLA-350" },
   { at: 700, wire_size: "2 \u00d7 240 mm\u00b2 Cu", lug_size_label: "2 \u00d7 240 mm\u00b2 (2 \u00d7 500 MCM)", bending_clearance_mm: 325, parallel_count: 2, mgl_cat_no: "MGLA-500" },
   { at: 800, wire_size: "2 \u00d7 240 mm\u00b2 Cu", lug_size_label: "2 \u00d7 240 mm\u00b2 (2 \u00d7 500 MCM)", bending_clearance_mm: 350, parallel_count: 2, mgl_cat_no: "MGLA-500" },
+  // Above 800A: ESTIMATED values (extrapolated from the 400-800A trend and the
+  // mech-lug table's 3 sets per pole). Verify against your real wiring/lug
+  // practice and edit in Database admin > Clearance.
+  { at: 1000, wire_size: "3 \u00d7 300 mm\u00b2 Cu", lug_size_label: "3 \u00d7 300 mm\u00b2 (3 \u00d7 600 MCM)", bending_clearance_mm: 400, parallel_count: 3, mgl_cat_no: "MGLA-600" },
+  { at: 1250, wire_size: "3 \u00d7 400 mm\u00b2 Cu", lug_size_label: "3 \u00d7 400 mm\u00b2 (3 \u00d7 800 MCM)", bending_clearance_mm: 450, parallel_count: 3, mgl_cat_no: "MGLA-800" },
+  { at: 1600, wire_size: "4 \u00d7 400 mm\u00b2 Cu", lug_size_label: "4 \u00d7 400 mm\u00b2 (4 \u00d7 800 MCM)", bending_clearance_mm: 500, parallel_count: 4, mgl_cat_no: "MGLA-800" },
+  { at: 2000, wire_size: "4 \u00d7 500 mm\u00b2 Cu", lug_size_label: "4 \u00d7 500 mm\u00b2 (4 \u00d7 1000 MCM)", bending_clearance_mm: 550, parallel_count: 4, mgl_cat_no: "MGLA-1000" },
 ];
 const CLEARANCE = [];
 

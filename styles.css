@@ -756,6 +756,33 @@ table.admin-table td.actions { text-align: center; width: 36px; }
   color: var(--muted);
 }
 
+.po-incomplete-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: #FBEDEA;
+  color: var(--ink);
+}
+.po-incomplete-title { font-weight: 700; color: var(--danger); margin-bottom: 6px; }
+.po-incomplete-list { margin: 0 0 8px; padding-left: 20px; font-size: 14px; }
+.po-incomplete-note { font-size: 14px; margin-bottom: 10px; }
+.po-incomplete-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.po-incomplete-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: #FBEDEA;
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 500;
+}
+.po-warn { margin: 2px 0 6px; }
+.po-warn-tag { display: inline-block; font-size: 12px; font-weight: 700; color: var(--danger); }
+.po-warn-list { margin: 2px 0 0; padding-left: 18px; font-size: 12px; color: var(--danger); }
+
 .po-save-row {
   display: flex;
   align-items: center;

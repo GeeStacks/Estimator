@@ -1,4 +1,4 @@
-const CACHE_NAME = "panel-board-builder-v15";
+const CACHE_NAME = "panel-board-builder-v17";
 
 const APP_SHELL = [
   "./",

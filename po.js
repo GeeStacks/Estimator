@@ -103,22 +103,33 @@
   // "PANEL BOARD" title line.
   function buildDescriptionLines(config, name) {
     const lines = [];
-    lines.push(name || "PANEL BOARD");
 
     const isTrayType = ["Cable Tray", "Gutter", "Pull Box"].includes(config.panelType);
     if (isTrayType) {
-      lines.push(config.panelType.toUpperCase());
+      // Title line: the item name, or the box type when the name is still the
+      // generic "PANEL BOARD" default (no panel board is being sold here).
+      const typeLabel = config.panelType.toUpperCase();
+      const title = name && name !== "PANEL BOARD" ? name : typeLabel;
+      lines.push(title);
+      if (title !== typeLabel) lines.push(typeLabel);
+      // trayHeight holds the box depth (builder label: "Depth (mm)").
       lines.push(
-        "DIMENSIONS (L x W x H): " + (config.trayLength || 0) + " x " + (config.trayWidth || 0) + " x " + (config.trayHeight || 0) + " MM"
+        "DIMENSIONS (L x W x D): " + (config.trayLength || 0) + " x " + (config.trayWidth || 0) + " x " + (config.trayHeight || 0) + " MM"
       );
       if (config.busbarGutter && config.busbarGutterKey && config.panelType !== "Cable Tray") {
         const [bType, bAt] = config.busbarGutterKey.split("|");
+        const bar = (typeof BUSBARS !== "undefined" ? BUSBARS : []).find((b) => b.type === bType && Number(b.at) === Number(bAt));
+        // "6MM X 25MM X 20FT (...)" -> "6MM X 25MM"; no breaker rating is shown.
+        const sizeMatch = bar && bar.needed ? String(bar.needed).match(/^(.*?)\s*X\s*20FT/i) : null;
+        const barSize = sizeMatch ? sizeMatch[1] : bar && bar.needed ? bar.needed : "BUSBAR";
         lines.push(
-          "WITH BUSBAR: " + config.busbarGutterQty + "EA- " + bAt + "AT " + bType + ", " + (config.busbarGutterLength || 0) + " MM"
+          "WITH BUSBAR: " + config.busbarGutterQty + "EA- " + barSize + ", " + (config.busbarGutterLength || 0) + " MM LONG"
         );
       }
       return lines;
     }
+
+    lines.push(name || "PANEL BOARD");
 
     lines.push(config.supplyVoltage + "V, " + config.supplyDescriptionText);
     lines.push(config.mountingType);
@@ -128,14 +139,14 @@
     if (config.mainResolved) {
       const m = config.mainResolved;
       lines.push(
-        config.main.qty + "EA- " + m.at + "AT, " + m.frame + "AF, " + m.poles + "P, " + m.kaic + "KAIC, " + m.model + " (" + m.type + ")"
+        ((config.main && config.main.qty) || 1) + "EA- " + m.at + "AT, " + m.frame + "AF, " + m.poles + "P, " + m.kaic + "KAIC, " + m.model + " (" + m.type + ")"
       );
     } else {
       lines.push("(no main breaker selected)");
     }
 
     lines.push("BRANCHES:");
-    const branchLines = config.branchesResolved.filter((b) => b.rowData);
+    const branchLines = (config.branchesResolved || []).filter((b) => b.rowData);
     if (branchLines.length) {
       branchLines.forEach((b) => {
         const r = b.rowData;
@@ -190,7 +201,7 @@
   function renderRow(q, index) {
     const totalCost = q.qty * roundUp(q.unitCost);
     const isEditing = editingId === q.id;
-    const descriptionBody = q.description.split("\n").slice(1).join("\n");
+    const descriptionBody = String(q.description || "").split("\n").slice(1).join("\n");
 
     return el("tr", { class: isEditing ? "po-row-editing" : undefined }, [
       el("td", { class: "po-item-no" }, [String(index + 1)]),
@@ -201,6 +212,12 @@
           value: q.name || "PANEL BOARD",
           onchange: (e) => renameQuotation(q, e.target.value),
         }),
+        Array.isArray(q.warnings) && q.warnings.length
+          ? el("div", { class: "po-warn" }, [
+              el("div", { class: "po-warn-tag" }, ["\u26A0 Incomplete \u2013 manual quote needed"]),
+              el("ul", { class: "po-warn-list" }, q.warnings.map((t) => el("li", {}, [t]))),
+            ])
+          : null,
         el("pre", {}, [descriptionBody]),
       ]),
       el("td", { class: "po-qty" }, [
@@ -386,6 +403,16 @@
 
     const grandTotal = quotations.reduce((sum, q) => sum + q.qty * roundUp(q.unitCost), 0);
 
+    const incompleteCount = quotations.filter((q) => Array.isArray(q.warnings) && q.warnings.length).length;
+    if (incompleteCount) {
+      wrap.appendChild(
+        el("div", { class: "po-incomplete-banner" }, [
+          "\u26A0 " + incompleteCount + " line item" + (incompleteCount !== 1 ? "s are" : " is") +
+            " marked incomplete \u2014 the prices below leave out the items listed on those lines.",
+        ])
+      );
+    }
+
     const table = el("table", { class: "admin-table po-table" }, [
       el("thead", {}, [
         el("tr", {}, [
@@ -500,6 +527,7 @@
       unit: "ASSY",
       unitCost: roundUp(config.grandTotal),
       config,
+      warnings: Array.isArray(config.warnings) ? config.warnings : [], // what was missing from this estimate
       savedAt: Date.now(),
     };
     let id;

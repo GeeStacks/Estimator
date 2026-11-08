@@ -1407,6 +1407,7 @@ function computeSteelSheetAllocation(boxData) {
   let giGauge = "16";
   let poItemName = "PANEL BOARD";
   let poSaveMessage = "";
+  let poConfirmingIncomplete = false; // true while the "estimate is incomplete" prompt is open
   let boxPrice = 0;
   let boxSafetyFactor = DEFAULT_BOX_SAFETY_FACTOR;
   let steelSheetPrice = DEFAULT_STEEL_SHEET_PRICE; // user-editable price per full 2440x1220 sheet
@@ -1604,7 +1605,7 @@ function computeSteelSheetAllocation(boxData) {
         el("span", {}, [
           b.label ? b.label : b.width + "mm \u00d7 " + b.cuts,
         ]),
-        el("span", { class: "mono" }, [b.totalLength + "mm"]),
+        el("span", { class: "mono" }, [Math.round(b.totalLength * 10) / 10 + "mm"]),
       ])
     );
     return el("div", { class: "busbar-block" }, [
@@ -2627,7 +2628,8 @@ function computeSteelSheetAllocation(boxData) {
     const groundLugs = computeGroundLugs();
     cost += groundLugs.cost;
 
-    const groundBusbar = computeGroundBusbar();
+    // Cable trays carry no ground or neutral busbars.
+    const groundBusbar = panelType === "Cable Tray" ? null : computeGroundBusbar();
     // Custom (cut-to-size) ground/neutral busbars carry the same x1.2 busbar
     // safety factor as main/branch busbars; in-stock ones do not.
     const groundBusbarCharged =
@@ -2636,7 +2638,7 @@ function computeSteelSheetAllocation(boxData) {
         : 0;
     cost += groundBusbarCharged;
 
-    const neutralBusbar = computeNeutralBusbar(needsNeutralBar);
+    const neutralBusbar = computeNeutralBusbar(needsNeutralBar && panelType !== "Cable Tray");
     const neutralBusbarCharged =
       neutralBusbar.cost !== null
         ? neutralBusbar.cost * (neutralBusbar.source === "custom" ? BUSBAR_SAFETY_FACTOR : 1)
@@ -2675,6 +2677,68 @@ function computeSteelSheetAllocation(boxData) {
       boxSafetyFactor,
       boxOtherPrice: boxPrice,
     };
+  }
+
+  // Plain-language list of everything that is missing from (or not priced in)
+  // the current estimate. Empty list = the estimate is complete. Used by the
+  // "Save to PO" prompt and stored on the PO line so it can be flagged there.
+  function collectWarnings(totals) {
+    const w = [];
+
+    if (isTrayOrGutter()) {
+      if (!trayLength || !trayWidth || !trayHeight) w.push("Box: length, width and depth must all be entered");
+      if ((panelType === "Gutter" || panelType === "Pull Box") && busbarGutter) {
+        if (!busbarGutterKey) w.push("Busbar gutter: no busbar size selected");
+        else if (totals.busbarGutterCost && totals.busbarGutterCost.cost === null) w.push("Busbar gutter: no rate for the selected busbar");
+      }
+      if (totals.steelSheets && totals.steelSheets.exceedsAny) w.push("Box: a panel exceeds the sheet size and is left out of the material price");
+      return w;
+    }
+
+    const mainData = resolveRowData(main);
+    if (!mainData) return ["No main breaker selected"];
+
+    if (totals.missing > 0) {
+      w.push(totals.missing + " breaker model" + (totals.missing !== 1 ? "s have" : " has") + " no price (NO PRICE)");
+    }
+
+    if (totals.assembly) {
+      if (totals.assembly.overCapacity) w.push("Assembly: none large enough for " + totals.assembly.totalWays + " ways");
+    } else {
+      if (totals.mainBusbar && totals.mainBusbar.exceedsTable) w.push("Main busbar: no rate for " + mainData.at + "A");
+      if (totals.branchBusbar && totals.branchBusbar.exceedsCount > 0) {
+        w.push("Branch busbar: no rate for " + totals.branchBusbar.exceedsCount + " cut" + (totals.branchBusbar.exceedsCount !== 1 ? "s" : ""));
+      }
+    }
+
+    if (totals.mechLugs.main.missing > 0) w.push("Mech lugs: no bracket for the main breaker's " + mainData.at + "A");
+    if (totals.mechLugs.branches.missing > 0) {
+      w.push("Mech lugs: no bracket for " + totals.mechLugs.branches.missing + " branch circuit" + (totals.mechLugs.branches.missing !== 1 ? "s" : ""));
+    }
+    if (totals.groundLugs.missing > 0) {
+      w.push("Ground lugs: no bracket for " + totals.groundLugs.missing + " circuit" + (totals.groundLugs.missing !== 1 ? "s" : ""));
+    }
+    if (totals.groundBusbar && totals.groundBusbar.cost === null) {
+      w.push("Ground busbar: " + (totals.groundBusbar.source === "inStock" ? "branch count exceeds the grounding table" : "no rate for " + mainData.at + "A"));
+    }
+    if (totals.neutralBusbar && totals.neutralBusbar.enabled && totals.neutralBusbar.cost === null) {
+      w.push("Neutral busbar: " + (totals.neutralBusbar.source === "inStock" ? "branch count exceeds the grounding table" : "no rate for " + mainData.at + "A"));
+    }
+    if (totals.atsMts && !totals.atsMts.noMain && totals.atsMts.exceedsTable) {
+      w.push("ATS/MTS: main AT/poles not found in the ATS/MTS table");
+    }
+
+    const bd = totals.boxDimensions;
+    if (bd && bd.exceedsTable) {
+      w.push(bd.isEcb || bd.isAts || bd.isMts
+        ? "Box: no box size in the table for the main breaker"
+        : "Box: clearance not found for the main breaker");
+    } else if (!bd || bd.width === null || bd.height === null) {
+      w.push("Box: size could not be calculated (a main-only panel should use ECB)");
+    } else if (totals.steelSheets && totals.steelSheets.exceedsAny) {
+      w.push("Box: a panel exceeds the sheet size and is left out of the material price");
+    }
+    return w;
   }
 
   function render() {
@@ -2892,13 +2956,13 @@ function computeSteelSheetAllocation(boxData) {
       const trayFields = [
         dimInput("Length (mm)", trayLength, (v) => { trayLength = v; }),
         dimInput("Width (mm)", trayWidth, (v) => { trayWidth = v; }),
-        dimInput("Height (mm)", trayHeight, (v) => { trayHeight = v; }),
+        dimInput("Depth (mm)", trayHeight, (v) => { trayHeight = v; }),
       ];
 
       const traySection = el("div", { class: "section" }, [
         el("h2", {}, [panelType + " dimensions"]),
         el("p", { class: "sub" }, [
-          "No breakers for a " + panelType.toLowerCase() + " \u2014 enter the run's length, width, and height directly.",
+          "No breakers for a " + panelType.toLowerCase() + " \u2014 enter the run's length, width, and depth directly.",
         ]),
         el("div", { class: "po-letterhead-editor" }, trayFields),
         panelType === "Gutter" || panelType === "Pull Box"
@@ -3120,7 +3184,7 @@ function computeSteelSheetAllocation(boxData) {
       ]),
       el("div", { style: "margin-top:14px;" }, [renderNeutralBusbarBlock(totals.neutralBusbar)]),
     ]);
-    wrap.appendChild(groundSection);
+    if (panelType !== "Cable Tray") wrap.appendChild(groundSection);
 
     // Box dimensions
     const boxSection = el("div", { class: "section" }, [
@@ -3316,6 +3380,26 @@ function computeSteelSheetAllocation(boxData) {
 
     // Save to PO
     const editingId = window.getPOEditingId ? window.getPOEditingId() : null;
+    const warnings = collectWarnings(totals);
+    if (poConfirmingIncomplete && !warnings.length) poConfirmingIncomplete = false; // fixed while the prompt was open
+    const confirming = poConfirmingIncomplete;
+    const savedAmount = Math.ceil(receipt.grandTotal - 1e-9).toLocaleString("en-PH", { maximumFractionDigits: 0 });
+
+    async function runSave() {
+      poConfirmingIncomplete = false;
+      try {
+        if (!window.savePOItem) throw new Error("PO tool is not available");
+        await window.savePOItem(poItemName);
+        poSaveMessage =
+          (editingId !== null ? "Updated PO line item." : "Saved to PO Creation Tool.") +
+          (warnings.length ? " Marked incomplete \u2014 manual quote needed." : "");
+      } catch (err) {
+        console.error("Save to PO failed.", err);
+        poSaveMessage = "Could not save: " + (err && err.message ? err.message : "unknown error");
+      }
+      render();
+    }
+
     const poSection = el("div", { class: "section" }, [
       el("h2", {}, ["Save to PO"]),
       editingId !== null
@@ -3333,10 +3417,15 @@ function computeSteelSheetAllocation(boxData) {
           "button",
           {
             class: "add-btn",
+            disabled: confirming ? "disabled" : undefined,
             onclick: async () => {
-              if (window.savePOItem) await window.savePOItem(poItemName);
-              poSaveMessage = editingId !== null ? "Updated PO line item." : "Saved to PO Creation Tool.";
-              render();
+              if (warnings.length) {
+                poSaveMessage = "";
+                poConfirmingIncomplete = true;
+                render();
+                return;
+              }
+              await runSave();
             },
           },
           [editingId !== null ? "Update PO line item" : "+ Save to PO"]
@@ -3356,6 +3445,17 @@ function computeSteelSheetAllocation(boxData) {
             )
           : null,
       ]),
+      confirming
+        ? el("div", { class: "po-incomplete-box", role: "alert" }, [
+            el("div", { class: "po-incomplete-title" }, ["\u26A0 This estimate is incomplete:"]),
+            el("ul", { class: "po-incomplete-list" }, warnings.map((t) => el("li", {}, [t]))),
+            el("div", { class: "po-incomplete-note" }, ["Saving will store \u20B1" + savedAmount + " without these items."]),
+            el("div", { class: "po-incomplete-actions" }, [
+              el("button", { class: "add-btn", onclick: runSave }, ["Save anyway"]),
+              el("button", { class: "toolbar-btn", onclick: () => { poConfirmingIncomplete = false; render(); } }, ["Cancel"]),
+            ]),
+          ])
+        : null,
       poSaveMessage ? el("div", { class: "po-save-message" }, [poSaveMessage]) : null,
     ]);
     wrap.appendChild(poSection);
@@ -3412,7 +3512,9 @@ function computeSteelSheetAllocation(boxData) {
     const branchesResolved = activeBranches().map((sel) => ({ sel: { ...sel }, rowData: resolveRowData(sel) }));
     const totals = computeTotals();
     const receipt = computeReceipt(totals.cost);
+    const warnings = collectWarnings(totals);
     return {
+      warnings, incomplete: warnings.length > 0,
       main: { ...main },
       branches: branches.map((b) => ({ ...b })),
       useAssembly, mainLugMultiplier, panelType, supplyVoltage, needsNeutralBar, busbarSourceMode,
@@ -3429,11 +3531,11 @@ function computeSteelSheetAllocation(boxData) {
 
   window.loadBuilderConfig = function (config) {
     if (!config) return;
-    main = { ...config.main };
+    main = { ...emptyRow(), ...(config.main || {}) };
     panelType = config.panelType || "MDP";
     if (panelType === "ATS/ATS MDP" || panelType === "MTS/ MTS MDP") main.qty = 2;
     applyBoxPricingDefaults(panelType);
-    branches = panelType === "ECB" || isTrayOrGutter() ? [] : config.branches.map((b) => ({ ...b }));
+    branches = panelType === "ECB" || isTrayOrGutter() ? [] : (config.branches || []).map((b) => ({ ...b }));
     trayLength = config.trayLength || 0;
     trayWidth = config.trayWidth || 0;
     trayHeight = config.trayHeight || 0;
@@ -3480,6 +3582,7 @@ function computeSteelSheetAllocation(boxData) {
     if (config.laborHours !== undefined) laborHours = config.laborHours;
     if (config.laborRatePerHour !== undefined) laborRatePerHour = config.laborRatePerHour;
     if (config.materialLossPct !== undefined) materialLossPct = config.materialLossPct;
+    poConfirmingIncomplete = false;
     poSaveMessage = "";
     render();
   };
