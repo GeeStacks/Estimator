@@ -145,6 +145,9 @@
       lines.push("(no main breaker selected)");
     }
 
+    // ECB is a single enclosed breaker: no branches section at all.
+    if (config.panelType === "ECB") return lines;
+
     lines.push("BRANCHES:");
     const branchLines = (config.branchesResolved || []).filter((b) => b.rowData);
     if (branchLines.length) {
