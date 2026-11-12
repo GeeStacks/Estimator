@@ -24,7 +24,7 @@ const BUSBARS = [{"type":"MCB","min":16,"max":16,"condition":"exceeding 24 branc
                  {"type":"MCCB","min":350,"max":350,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT)","price":16000.0},
                  {"type":"MCCB","min":400,"max":400,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT)","price":16000.0},
                  {"type":"MCCB","min":500,"max":500,"condition":null,"needed":"6MM X 25MM X 20FT (1/4 X 1 X 20FT) - 2 PCS","price":18000.0},
-                 {"type":"MCCB","min":630,"max":630,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT) - 2 PCS","price":28000.0},
+                 {"type":"MCCB","min":630,"max":630,"condition":null,"needed":"6MM X 30MM X 20FT (1/4 X 1-1/4 X 20FT) - 2 PCS","price":52000.0},
                  {"type":"MCCB","min":700,"max":700,"condition":null,"needed":"10MM X 40MM X 20FT (3/8 X 1-1/2 X 20FT)","price":52000.0},
                  {"type":"MCCB","min":800,"max":800,"condition":null,"needed":"10MM X 40MM X 20FT (3/8 X 1-1/2 X 20FT) - 2 PCS","price":52000.0},
                  {"type":"MCCB","min":1000,"max":1000,"condition":null,"needed":"6MM X 50MM X 20FT (1/4 X 2 X 20FT) - 2 PCS","price":56000.0},
