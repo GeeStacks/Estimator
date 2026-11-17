@@ -30,7 +30,6 @@ const BUSBARS = [{"type":"MCB","min":16,"max":16,"condition":"exceeding 24 branc
                  {"type":"MCCB","min":1000,"max":1000,"condition":null,"needed":"6096MM X 50MM X 6MM (20FT X 2 X 1/4) - 2 PCS","price":56000.0},
                  {"type":"MCCB","min":1250,"max":1250,"condition":null,"needed":"6096MM X 50MM X 10MM (20FT X 2 X 3/8) - 2 PCS","price":68000.0}
 ]
-];
 const CONSTANTS = {"main_bend_mm":260.0,"excess_bend_mm":100.0,"ground_bus_length_mm":250.0,"neutral_bus_length_mm":250.0,"box_main_branch_gap_mm":40.0,"box_insulator_ground_stand_mm":70.0,"box_backplate_clearance_mm":50.0,"box_side_clearance_mm":15.0};
 const ECB_BOX_DIMENSIONS = [
   { type: "MCB", frame: null, width_2_pole: 150, width_3_pole: 200, three_piece_length: 250, depth: 150 },
